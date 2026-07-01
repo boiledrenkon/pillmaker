@@ -1,18 +1,18 @@
-# One co-located worker = the Discord bridge + the Smithers control plane it
-# spawns. Get the repo onto your VPS (rsync — see WORKER.md), fill .env,
-# `docker compose up -d --build`. Run a second flavour by copying this with a
-# different env_file (e.g. a worker pointing at a different Discord server).
+# Portable worker = the Discord bridge + the Smithers control plane it spawns,
+# shipped as a prebuilt multi-arch image (arm64 + amd64) on GHCR. Deploy on ANY
+# host with Docker: `docker login ghcr.io` (once), drop in .env, then
+#   docker compose pull && docker compose up -d
+# No source or build needed on the host — same command on a Mac Mini or a VPS.
 #
 # Runs as the non-root `bun` user (uid 1000). The ./outputs bind mount must be
 # writable by uid 1000 — create it first: `mkdir -p outputs && sudo chown 1000:1000 outputs`.
+#
+# To rebuild/publish a new version (on a machine with the source + buildx):
+#   docker buildx build --platform linux/amd64,linux/arm64 \
+#     -t ghcr.io/boiledrenkon/pillmaker:latest --push .
 services:
   worker:
-    build:
-      context: .
-      # To bake in an API backend SDK, uncomment one:
-      # args: { PIP_EXTRAS: "google-genai" }   # gemini
-      # args: { PIP_EXTRAS: "openai" }          # openai
-      # args: { PIP_EXTRAS: "replicate requests" }
+    image: ghcr.io/boiledrenkon/pillmaker:latest
     env_file: .env
     environment:
       PROJECT_ROOT: /app
