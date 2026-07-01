@@ -1,0 +1,21 @@
+**Human-in-the-loop image generation.** The workflow has produced and QC'd the
+prompt below. Generate the image in whatever tool you use (ChatGPT / Gemini /
+Midjourney / etc.), then submit the path to the PNG you saved.
+
+### What to do
+
+1. Copy the prompt below into your image tool. Attach the reference images listed
+   if your tool supports image input.
+2. Save the resulting PNG to: **{props.savePath}**
+   (create the folder if needed).
+3. Submit your answer with `slug: {props.slug}`, `imagePath` set to that path,
+   `ok: true`, and an optional `note`. If you gave up, set `ok: false` and
+   explain in `note`.
+
+### Reference images
+
+{props.refImages}
+
+### Final prompt
+
+{props.prompt}

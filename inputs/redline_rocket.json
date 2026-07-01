@@ -1,0 +1,18 @@
+{
+  "slug": "redline_rocket",
+  "name": "GRAND TOURISMO",
+  "gender": "male",
+  "theme": "high-performance sports car racing: twin-turbo supercars, redline tachometers, neon-lit night circuits, pit-lane swagger, speed and horsepower bravado",
+  "mainTagline": "=GO FROM 0 TO 60 IN UNDER A SECOND",
+  "subtitle": "=HIGH-PERFORMANCE TWIN-TURBO VITALITY FORMULA",
+  "copyLines": [
+    "=MAXIMUM HORSEPOWER UNDER THE HOOD",
+    "=STAYS HARD IN EVERY GEAR",
+    "=RIDES ALL NIGHT, NEVER STALLS",
+    "=PRECISION-TUNED FOR FULL THROTTLE",
+    "=REDLINE STAMINA, ZERO BREAKDOWNS",
+    "=GRIP THE CURVES, GO THE DISTANCE"
+  ],
+  "extraInstructions": "Original parody design. Do NOT use real car-brand logos or badges (Ferrari, Lamborghini, Porsche, etc.), the Gran Turismo game logo, or any real automaker trademark. Generic original supercar. Include the genre's tasteful pleased partner figure. Single capsule under the blister. No explicit content.",
+  "bannedExtra": ["real car manufacturer logos or badges", "the Gran Turismo game logo or wordmark", "real automaker trademarks (Ferrari, Lamborghini, Porsche, and similar)"]
+}

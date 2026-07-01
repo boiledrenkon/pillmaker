@@ -1,0 +1,17 @@
+.git
+**/node_modules
+**/.venv
+.venv
+.venv-img
+.env
+discord/state.db
+discord/worker.log
+**/smithers.db*
+data
+# Keep ref_images (small, needed); exclude bulky generated candidates/fails.
+outputs/**/candidates
+outputs/**/fail
+# The worker scores via the portable config/clip/ artifact — the scraper itself
+# is never needed in the image. Re-tune locally and ship config/clip/ instead.
+scraper
+**/.DS_Store

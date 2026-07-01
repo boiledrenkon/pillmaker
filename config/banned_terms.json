@@ -1,0 +1,20 @@
+{
+  "_comment": "Editable banned-items list for QC. Add or remove freely. The image/prompt judges treat every line here as a hard constraint. Per-concept extras (concept.bannedExtra) merge on top of these at runtime.",
+  "banned_visual": [
+    "real brand logos, trademarks, or wordmarks of actual companies",
+    "the SEGA logo or any real game-console / studio logo",
+    "copyrighted characters or recognizable mascots",
+    "real celebrity or public-figure likenesses",
+    "explicit anatomy, genitalia, or pornographic depiction",
+    "real money, real currency notes, or real credit-card art",
+    "exact replicas of real theme-park or franchise branding"
+  ],
+  "banned_text": [
+    "medical or health claims (cures, treats, prevents, FDA-approved, clinically proven, doctor recommended)",
+    "real pharmaceutical brand names (Viagra, Cialis, Levitra, Sildenafil as a brand)",
+    "real company or brand names presented as the product's maker",
+    "dosage or prescription-style instructions implying a real drug",
+    "hate speech, slurs, or targeted harassment"
+  ],
+  "notes": "These map to the recurring negative constraints in the seed prompts: 'No copyrighted characters, no real logos, no exact theme-park branding, no explicit anatomy, no medical claims.' Keep it short and concrete so the judge can check each line."
+}

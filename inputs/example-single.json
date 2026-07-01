@@ -1,0 +1,32 @@
+{
+  "backend": "manual",
+  "promptQc": "both",
+  "imageQc": "both",
+  "maxAttempts": 3,
+  "concepts": [
+    {
+      "slug": "power_rod_11",
+      "name": "POWER ROD 11",
+      "gender": "male",
+      "theme": "late-1990s arcade fishing games, bass tournament culture, Dreamcast-era sports-game cover art, boat docks, tackle boxes, mirrored sunglasses, exaggerated pro-fishing confidence",
+      "artwork": "A massive largemouth bass erupts from a crystal-clear lake in a dramatic splash; a confident tournament fisherman in wraparound sunglasses, fishing vest, cap and windbreaker holds the trophy catch; arcade-style excitement, bright colors, nostalgic late-90s energy",
+      "tags": ["arcade sports cover", "tournament fishing", "late-90s nostalgia", "chrome-and-gold lettering"],
+      "title": "=POWER ROD 11",
+      "subtitle": "=TOURNAMENT GRADE PERFORMANCE FORMULA",
+      "mainTagline": "=HOOK THE BIG ONE",
+      "copyLines": [
+        "=MAXIMUM LINE TENSION",
+        "=CAST WITH CONFIDENCE",
+        "=BIG BASS ENERGY",
+        "=PROFESSIONAL ROD CONTROL",
+        "=FOR SERIOUS ANGLERS ONLY",
+        "=WHEN THE BITE IS HOT"
+      ],
+      "capsule": "metallic bass-green and gold capsule under realistic blister plastic",
+      "packagingStyle": "Dreamcast-era sports game cover art, arcade fishing-game energy, glossy reflections, vibrant colors, collectible novelty product photography",
+      "refImages": ["outputs/power_rod_11/ref_images"],
+      "extraInstructions": "Put a huge rainbow-gradient 'FISH!!' graphic where other products put 'MAXIMUM STRENGTH'. Do not use the SEGA logo.",
+      "bannedExtra": ["the SEGA logo", "any real arcade or console brand"]
+    }
+  ]
+}

@@ -1,0 +1,40 @@
+{
+  "backend": "manual",
+  "promptQc": "both",
+  "imageQc": "both",
+  "maxAttempts": 3,
+  "clipWeight": 0.2,
+  "concepts": [
+    {
+      "slug": "nibbana_6900",
+      "name": "NIBBANA 6900",
+      "gender": "couples",
+      "theme": "sparse Zen ink painting (sumi-e), Bodhidharma scroll art, aged rice paper, vast negative space, forbidden temple medicine",
+      "artwork": "Left: a Bodhidharma-like Zen master in a handful of bold black ink strokes. Right: a serene female figure in the same calligraphic style, eyes closed, blissful. Between them a single gold capsule under blister plastic as the symbolic bridge.",
+      "tags": ["sumi-e", "negative space", "hand-painted calligraphy", "muted red seal chops"],
+      "title": "=NIBBANA 6900",
+      "subtitle": null,
+      "mainTagline": "=AWAKEN HER INNER BLISS",
+      "copyLines": ["=ENLIGHTENMENT SUPPORT", "=COSMIC VITALITY FORMULA"],
+      "capsule": "single metallic gold capsule under realistic blister plastic",
+      "packagingStyle": "museum-quality sumi-e brushwork, extremely sparse and elegant, black ink on warm cream paper, occasional red seal marks",
+      "refImages": ["outputs/nibbana_6900/ref_images"],
+      "extraInstructions": "Hand-painted imperfect title. No metallic borders, no holographic effects, no badges, no 'Maximum Strength'.",
+      "bannedExtra": ["metallic borders", "holographic effects", "Maximum Strength badge"]
+    },
+    {
+      "slug": "navida_gorillion",
+      "name": "NAVIDA GORILLION",
+      "gender": "male",
+      "theme": "over-the-top jungle gorilla power fantasy, chest-beating dominance, lush foliage, gold-plated bravado",
+      "tags": ["silverback gorilla", "jungle", "gold chrome", "raw power"],
+      "title": "=NAVIDA GORILLION",
+      "mainTagline": "=UNLEASH THE BEAST",
+      "copyLines": ["=APEX VITALITY", "=SILVERBACK STAMINA", "=JUNGLE-GRADE POWER"],
+      "capsule": "jet-black and gold capsule under blister plastic",
+      "packagingStyle": "glossy convenience-store blister card, gold foil, vivid jungle greens, exaggerated power-fantasy energy",
+      "refImages": ["outputs/navida_gorillion/ref_images"],
+      "extraInstructions": "Lean into the absurd bravado."
+    }
+  ]
+}

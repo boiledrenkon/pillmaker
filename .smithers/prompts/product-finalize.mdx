@@ -1,0 +1,36 @@
+Finalize this concept's outputs on disk, matching the existing repo convention,
+then return the structured result.
+
+### Convention (mirror the existing `outputs/<slug>/` folders)
+
+- Accepted image → `{props.outDir}/{props.slug}/{props.slug}.png`
+- Final prompt   → `{props.outDir}/{props.slug}/{props.slug}.txt`
+- Rejected candidates → `{props.outDir}/{props.slug}/fail/` (keep their filenames)
+- Reference images used → leave any provided refs where they are; if the spec's
+  refs were copied into the concept folder, keep them under
+  `{props.outDir}/{props.slug}/ref_images/`.
+
+### Decision
+
+- **status = {props.status}**
+- Accepted candidate path (if any): `{props.acceptedPath}`
+- All candidate paths produced this run (newline-separated):
+
+{props.candidates}
+
+### Steps
+
+1. Create `{props.outDir}/{props.slug}/` and its `fail/` subfolder.
+2. If `status` is `accepted` and an accepted path is given: copy it to
+   `{props.slug}.png` and write the final prompt (below) to `{props.slug}.txt`.
+3. Move every *other* candidate (and, if rejected, the accepted-but-denied one)
+   into `fail/`.
+4. Return `status`, `finalImage` (the saved .png path or null), `promptPath`
+   (the saved .txt path or null), and `fails` (list of paths moved to fail/).
+
+Use `cp`/`mkdir -p`/`mv` via your shell tool. Do not delete anything outside the
+concept's own folder.
+
+### Final prompt
+
+{props.prompt}

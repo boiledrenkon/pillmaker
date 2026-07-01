@@ -1,0 +1,22 @@
+# ── secrets — NEVER commit ───────────────────────────────────────────────────
+.env
+
+# ── dependencies / virtualenvs (reinstalled per host / built in the image) ───
+**/node_modules
+.venv
+.venv-img
+
+# ── runtime state + logs (regenerated per host; never source) ────────────────
+data
+*.db
+*.db-shm
+*.db-wal
+discord/worker.log
+
+# ── generated output (final images are delivered via Discord, not source) ────
+outputs/
+
+# ── python / OS cruft ────────────────────────────────────────────────────────
+**/__pycache__
+.DS_Store
+**/.DS_Store

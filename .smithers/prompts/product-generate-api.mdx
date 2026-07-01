@@ -1,0 +1,33 @@
+Generate the product image by running ONE shell command, then return the
+structured result. Do not invent your own image call — use only the command
+given below, exactly as written.
+
+IMPORTANT: the values below are already filled in for you. Use them verbatim.
+
+## Step 1 — write the prompt to a file
+
+Write the "Final prompt" text (at the very bottom of this message) to this exact
+path, creating the parent directory if needed:
+
+{props.savePath}.txt
+
+## Step 2 — run the generator
+
+Run this exact command from the project root (do not modify, rename, or
+substitute any part of it):
+
+{props.command}
+
+## Step 3 — return the result
+
+The command prints one JSON line. Return `slug` = {props.slug}, plus `imagePath`,
+`ok`, and `note` taken from that JSON line.
+
+- On success it wrote a PNG to {props.savePath}.
+- On failure (the JSON has `ok: false`, or the command errored), return
+  `ok: false` and put the command's error message in `note`. Do NOT retry inside
+  this task and do NOT fabricate a path — the workflow handles regeneration.
+
+## Final prompt to write to the file
+
+{props.prompt}

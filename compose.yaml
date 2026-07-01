@@ -1,0 +1,29 @@
+# One co-located worker = the Discord bridge + the Smithers control plane it
+# spawns. Get the repo onto your VPS (rsync — see WORKER.md), fill .env,
+# `docker compose up -d --build`. Run a second flavour by copying this with a
+# different env_file (e.g. a worker pointing at a different Discord server).
+#
+# Runs as the non-root `bun` user (uid 1000). The ./outputs bind mount must be
+# writable by uid 1000 — create it first: `mkdir -p outputs && sudo chown 1000:1000 outputs`.
+services:
+  worker:
+    build:
+      context: .
+      # To bake in an API backend SDK, uncomment one:
+      # args: { PIP_EXTRAS: "google-genai" }   # gemini
+      # args: { PIP_EXTRAS: "openai" }          # openai
+      # args: { PIP_EXTRAS: "replicate requests" }
+    env_file: .env
+    environment:
+      PROJECT_ROOT: /app
+      BOT_DB: /app/data/state.db
+    restart: unless-stopped
+    volumes:
+      - ./outputs:/app/outputs   # generated images persist to the host
+      # Both durable DBs live here: the bridge's state.db AND smithers.db
+      # (symlinked into /app/data by the Dockerfile) — so runs paused at a QC
+      # gate survive container restarts.
+      - worker-data:/app/data
+
+volumes:
+  worker-data:
