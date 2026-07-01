@@ -273,7 +273,7 @@ export default smithers((ctx) => {
               if={promptAutoOn}
               then={
                 <Task id={`${slug}:prompt-judge`} output={outputs.promptJudge} agent={judgeAgents} timeoutMs={900_000} heartbeatTimeoutMs={300_000}>
-                  <PromptJudge spec={spec} banned={banned} refImages={refList} humanNote={promptHumanNote} prompt={lastCompose?.prompt ?? "(compose this iteration)"} />
+                  <PromptJudge spec={spec} banned={banned} verbatim={verbatimList} refImages={refList} humanNote={promptHumanNote} prompt={lastCompose?.prompt ?? "(compose this iteration)"} />
                 </Task>
               }
             />
