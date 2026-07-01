@@ -97,6 +97,19 @@ export default smithers((ctx) => {
     }
   };
 
+  // `ctx.outputMaybe` is iteration-SCOPED — it returns the row for the current
+  // frame's iteration. That's correct INSIDE a loop, but at finalize (outside
+  // the loop) it can hand back a STALE early iteration: e.g. a prompt gate that
+  // was denied on iter0 then approved on iter1 reads back as the iter0 DENY,
+  // wrongly finalizing the whole run as needs_rework. For terminal accept/reject
+  // decisions, read the LATEST iteration's verdict straight from the store.
+  const latestApproved = (nodeId: string): boolean =>
+    countRows(
+      `SELECT approved n FROM approval WHERE run_id=? AND node_id=? ORDER BY iteration DESC LIMIT 1`,
+      ctx.runId,
+      nodeId,
+    ) === 1;
+
   const promptAutoOn = input.promptQc === "auto" || input.promptQc === "both";
   const promptHumanOn = input.promptQc === "human" || input.promptQc === "both";
   const imageAutoOn = input.imageQc === "auto" || input.imageQc === "both";
@@ -203,7 +216,10 @@ export default smithers((ctx) => {
     let editedPrompt = "";
     try { editedPrompt = readFileSync(`${outDir}/${slug}/.edited-${ctx.runId}.txt`, "utf8").trim(); } catch {}
     const finalPrompt = editedPrompt || (lastCompose?.prompt ?? "");
-    const promptOk = !promptHumanOn || promptApproval?.approved === true;
+    // Terminal check: use the LATEST approval iteration, not frame-scoped
+    // outputMaybe (which returns the stale iter-0 deny at finalize — the
+    // needs_rework bug on deny-then-approve prompt gates).
+    const promptOk = !promptHumanOn || latestApproved(`${slug}:approve-prompt`);
 
     // --- image loop state ---
     const genRows = (ctx.outputs.generate ?? []).filter((r: any) => r.slug === slug);
@@ -255,14 +271,17 @@ export default smithers((ctx) => {
 
     // The HUMAN decision is final whenever the human gate is on (it can override
     // an auto-QC reject). Auto-only → the judge decides. Neither → any image OK.
+    // Terminal reads use the LATEST iteration (latest gen row / latest approval),
+    // NOT frame-scoped outputMaybe, which returns a stale early iteration here.
+    const finalGen = genRows[genRows.length - 1];
     const status = !promptOk
       ? "needs_rework"
       : imageHumanOn
-        ? (imageApproval?.approved === true ? "accepted" : "rejected")
+        ? (latestApproved(`${slug}:approve-image`) ? "accepted" : "rejected")
         : imageAutoOn
           ? (lastImageJudge?.verdict === "accept" ? "accepted" : "rejected")
-          : (lastGen?.ok === true ? "accepted" : "rejected");
-    const acceptedPath = status === "accepted" ? lastGen?.imagePath ?? "" : "";
+          : (finalGen?.ok === true ? "accepted" : "rejected");
+    const acceptedPath = status === "accepted" ? finalGen?.imagePath ?? "" : "";
     const candidatesList = genRows.map((r: any) => r.imagePath).filter(Boolean).join("\n") || "(none)";
 
     return (
