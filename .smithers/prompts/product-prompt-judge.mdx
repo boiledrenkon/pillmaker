@@ -13,7 +13,10 @@ Score each criterion as `pass` or `fail`, then set the overall `verdict`:
    or altered required line ⇒ `fail`. (List exactly which lines are missing or
    wrong.)
 2. **faithfulness** — Does the artwork/theme match the spec's theme, gender, tags,
-   and extra instructions, with no contradictions?
+   and extra instructions, with no contradictions? EXCEPTION: where a human
+   reviewer note (see "Human reviewer direction" below) overrides a spec
+   instruction, following the human is what counts as faithful — do NOT fail this
+   for contradicting the now-superseded spec wording.
 3. **constraints** — Does the prompt include a NEGATIVE CONSTRAINTS block covering
    the banned list (+ per-concept extras), and does the prompt itself avoid
    describing anything banned (real logos, explicit anatomy, medical claims)?
@@ -25,6 +28,19 @@ Score each criterion as `pass` or `fail`, then set the overall `verdict`:
 
 `verdict` = `pass` only if completeness AND constraints pass and no other
 criterion is a hard miss. Otherwise `revise`.
+
+## Human reviewer direction (AUTHORITATIVE — overrides the spec)
+
+If a note appears below, a human reviewer has deliberately redirected this
+concept. Their direction is FINAL and **supersedes any conflicting instruction in
+the spec** — theme, extra instructions, aesthetic, era, palette, mood, etc. A
+prompt that follows the human's note IS faithful, even where it contradicts the
+spec's original wording; **never `revise` a prompt for obeying the human.** You
+MUST still enforce, regardless of the human note: every VERBATIM copy line + the
+product NAME (completeness), and the banned list (constraints). If the section is
+empty, there is no override — judge against the spec normally.
+
+{props.humanNote}
 
 ## Input spec (JSON)
 

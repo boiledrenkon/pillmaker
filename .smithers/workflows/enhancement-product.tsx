@@ -166,6 +166,13 @@ export default smithers((ctx) => {
             .filter(Boolean)
             .join("\n")}`
         : "";
+    // The human's live deny note ALSO goes to the judge (not just compose), so the
+    // auto-QC won't reject a prompt for following a human redirect that contradicts
+    // the concept's original spec (e.g. "make it modern" vs a saved "1980s" instruction).
+    const promptHumanNote =
+      promptHumanOn && promptApproval?.approved === false && promptApproval?.note
+        ? `A human reviewer redirected this concept — treat this as authoritative over the spec:\n- ${promptApproval.note}`
+        : "";
 
     // Only surface the human gate once the auto-judge has signed off this
     // iteration (or auto-QC is off) — a human never sees a machine-rejected draft.
@@ -266,7 +273,7 @@ export default smithers((ctx) => {
               if={promptAutoOn}
               then={
                 <Task id={`${slug}:prompt-judge`} output={outputs.promptJudge} agent={judgeAgents} timeoutMs={900_000} heartbeatTimeoutMs={300_000}>
-                  <PromptJudge spec={spec} banned={banned} refImages={refList} prompt={lastCompose?.prompt ?? "(compose this iteration)"} />
+                  <PromptJudge spec={spec} banned={banned} refImages={refList} humanNote={promptHumanNote} prompt={lastCompose?.prompt ?? "(compose this iteration)"} />
                 </Task>
               }
             />
