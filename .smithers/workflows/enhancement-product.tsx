@@ -197,7 +197,12 @@ export default smithers((ctx) => {
     // Hard safety cap on total iterations (sum of both budgets + buffer).
     const promptMaxIters = (promptAutoOn ? maxMachineRetries : 0) + (promptHumanOn ? maxHumanRetries : 0) + 2;
 
-    const finalPrompt = lastCompose?.prompt ?? "";
+    // Human-edited prompt override: if the reviewer used ✏️ Edit at the prompt
+    // gate, the bot wrote their exact text here and approved — it becomes the
+    // final prompt as-is (no recompose, no re-judge; the human is authoritative).
+    let editedPrompt = "";
+    try { editedPrompt = readFileSync(`${outDir}/${slug}/.edited-${ctx.runId}.txt`, "utf8").trim(); } catch {}
+    const finalPrompt = editedPrompt || (lastCompose?.prompt ?? "");
     const promptOk = !promptHumanOn || promptApproval?.approved === true;
 
     // --- image loop state ---

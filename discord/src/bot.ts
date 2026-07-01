@@ -22,7 +22,7 @@ import { resolve } from "node:path";
 import { config } from "./config";
 import { store, type RunRow } from "./store";
 import * as sm from "./smithers";
-import { cid, qcMessage, denyNoteModal, conceptModal, startRow, stopDiscardRow, intakeCard, reqModal, expandedCard } from "./ui";
+import { cid, qcMessage, denyNoteModal, editPromptModal, conceptModal, startRow, stopDiscardRow, intakeCard, reqModal, expandedCard } from "./ui";
 import { validateConcept, lines, type Concept } from "../../.smithers/shared/concept-schema";
 import { expandConcept, slugify, safeSlug } from "./expand";
 
@@ -336,6 +336,22 @@ async function onCommand(i: ChatInputCommandInteraction) {
     const ok = await reopenRun(r.runId, i.user.id);
     return void i.editReply(ok ? `🔓 Reopened \`${r.runId}\` — resuming to its gate.` : `Couldn't reopen \`${r.runId}\` (no saved input).`);
   }
+
+  // Re-run a finished/failed run as a FRESH run, keeping the original requester
+  // so they still get their completion DM (a reopen just replays the dead run).
+  if (i.commandName === "rerun") {
+    if (!(await isAdmin(i))) return void i.reply({ ephemeral: true, content: "Admins only." });
+    const arg = i.options.getString("run")?.trim();
+    const r = arg ? (store.runById(arg) ?? store.runBySlug(arg)) : store.runByThread(i.channelId);
+    if (!r) return void i.reply({ ephemeral: true, content: "Run not found — pass a runId/slug or use this in the run's thread." });
+    await i.deferReply({ ephemeral: true });
+    let concept: Concept | null = null;
+    try { concept = JSON.parse(r.inputJson ?? "{}")?.concepts?.[0] ?? null; } catch {}
+    if (!concept) return void i.editReply("Couldn't read that run's concept — nothing to re-run.");
+    const qc = (await client.channels.fetch(config.channels.qc)) as TextChannel;
+    const runId = await launch(concept, qc, r.requesterId); // preserves requesterId → they get notified
+    return void i.editReply(`🔁 Re-ran \`${r.slug}\` as a fresh run \`${runId}\`${r.requesterId ? ` (still credited to <@${r.requesterId}>)` : ""}.`);
+  }
 }
 
 // ── stop / discard / reopen ──────────────────────────────────────────────────
@@ -420,6 +436,25 @@ async function onModal(i: ModalSubmitInteraction) {
       await clearCardButtons(`card:${runId}:${iteration}:${nodeId}`);
     }
     await i.editReply(`❌ Denied by <@${i.user.id}> — _${note}_`);
+    return;
+  }
+
+  // ✏️ Edit-prompt submit: the human's exact text becomes the run's FINAL prompt
+  // (written where the workflow reads it) and the gate is approved — no recompose,
+  // no re-judge. Straight to image generation from their version.
+  if (i.customId.startsWith("editmodal:")) {
+    const { runId, iteration, nodeId } = cid.parse(i.customId);
+    const edited = i.fields.getTextInputValue("prompt");
+    await i.deferReply().catch(() => {}); // ack before the slow approve+resume
+    const r = store.runById(runId);
+    if (!r) return void i.editReply("Unknown run.");
+    const dir = resolve(config.projectRoot, `outputs/${r.slug}`);
+    await mkdir(dir, { recursive: true });
+    await writeFile(resolve(dir, `.edited-${runId}.txt`), edited, "utf8");
+    store.mark(`resolved:${r.runId}:${iteration}:${nodeId}`);
+    await sm.approve(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username);
+    await clearCardButtons(`card:${runId}:${iteration}:${nodeId}`);
+    await i.editReply(`✏️ Prompt edited by <@${i.user.id}> — generating from your exact version (auto-QC skipped).`);
     return;
   }
 
@@ -549,6 +584,19 @@ async function onButton(i: ButtonInteraction) {
     await i.update({ components: [] }).catch(() => {});
     if (hard) await hardDiscard(runId, i.user.id);
     else await softStop(runId, i.user.id);
+    return;
+  }
+
+  // ✏️ Edit button on a prompt-QC card → open the editable modal pre-filled with
+  // the composed prompt. (showModal must be the immediate ack; the DB read is fast.)
+  if (i.customId.startsWith("qcedit:")) {
+    const { runId, iteration, nodeId } = cid.parse(i.customId);
+    const prompt = sm.composedPrompt(runId) ?? "";
+    if (!prompt) return void i.reply({ ephemeral: true, content: "No composed prompt to edit yet." });
+    if (prompt.length > 4000) {
+      return void i.reply({ ephemeral: true, content: `⚠️ This prompt is ${prompt.length} chars — over Discord's 4000-char edit field. Use **Deny + note** for now (or ping me to add multi-field editing).` });
+    }
+    await i.showModal(editPromptModal(runId, nodeId, iteration, prompt));
     return;
   }
 

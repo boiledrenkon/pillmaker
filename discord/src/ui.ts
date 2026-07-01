@@ -22,6 +22,8 @@ export const cid = {
   approve: (runId: string, nodeId: string, iter: number) => `qc:approve:${runId}:${iter}:${gateSuffix(nodeId)}`,
   deny: (runId: string, nodeId: string, iter: number) => `qc:deny:${runId}:${iter}:${gateSuffix(nodeId)}`,
   denyModal: (runId: string, nodeId: string, iter: number) => `denynote:${runId}:${iter}:${gateSuffix(nodeId)}`,
+  editPrompt: (runId: string, nodeId: string, iter: number) => `qcedit:${runId}:${iter}:${gateSuffix(nodeId)}`,
+  editModal: (runId: string, nodeId: string, iter: number) => `editmodal:${runId}:${iter}:${gateSuffix(nodeId)}`,
   start: (token: string) => `start:${token}`,
   reqEdit: (token: string) => `reqedit:${token}`,
   reqLaunch: (token: string) => `reqlaunch:${token}`,
@@ -44,11 +46,37 @@ export function qcMessage(opts: {
     .setTitle(cut(opts.title, 256))
     .setDescription(cut(opts.summary || "Review and decide.", 4000))
     .setFooter({ text: `${kind} · ${opts.nodeId}` });
-  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+  const buttons = [
     new ButtonBuilder().setCustomId(cid.approve(opts.runId, opts.nodeId, opts.iteration)).setLabel("Approve").setStyle(ButtonStyle.Success),
     new ButtonBuilder().setCustomId(cid.deny(opts.runId, opts.nodeId, opts.iteration)).setLabel("Deny + note").setStyle(ButtonStyle.Danger),
-  );
+  ];
+  // Prompt gates get a direct ✏️ Edit (edit the text → it becomes the final
+  // prompt, bypassing recompose + judge). No edit for image gates.
+  if (!opts.nodeId.includes("image")) {
+    buttons.splice(1, 0, new ButtonBuilder().setCustomId(cid.editPrompt(opts.runId, opts.nodeId, opts.iteration)).setLabel("✏️ Edit").setStyle(ButtonStyle.Primary));
+  }
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
   return { embeds: [embed], components: [row] };
+}
+
+// Modal to edit the composed prompt directly. The submitted text becomes the
+// run's FINAL prompt as-is. Discord caps a field at 4000 chars — a longer prompt
+// is pre-filled truncated (the caller warns), which is rare.
+export function editPromptModal(runId: string, nodeId: string, iter: number, currentPrompt: string): ModalBuilder {
+  return new ModalBuilder()
+    .setCustomId(cid.editModal(runId, nodeId, iter))
+    .setTitle("Edit the final prompt")
+    .addComponents(
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        new TextInputBuilder()
+          .setCustomId("prompt")
+          .setLabel("This exact text becomes the image prompt")
+          .setStyle(TextInputStyle.Paragraph)
+          .setRequired(true)
+          .setMaxLength(4000)
+          .setValue((currentPrompt || "").slice(0, 4000)),
+      ),
+    );
 }
 
 export function denyNoteModal(runId: string, nodeId: string, iter: number): ModalBuilder {

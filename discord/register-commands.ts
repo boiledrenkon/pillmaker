@@ -49,6 +49,10 @@ const commands = [
     .setName("reopen")
     .setDescription("Reopen a stopped/shelved run back to its gate. Admin only.")
     .addStringOption((o) => o.setName("run").setDescription("runId or slug (omit to list shelved runs)")),
+  new SlashCommandBuilder()
+    .setName("rerun")
+    .setDescription("Re-run a finished/failed run fresh, keeping the original requester. Admin only.")
+    .addStringOption((o) => o.setName("run").setDescription("runId or slug (default: this thread's run)")),
 ].map((c) => c.toJSON());
 
 const rest = new REST({ version: "10" }).setToken(config.botToken);
