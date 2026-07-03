@@ -4,9 +4,9 @@ parody "enhancement" product** blister pack, in the established house style of
 this product line. You are an AUTHOR, not just an assembler — when a copy slot is
 not provided, you invent it from the theme.
 
-Return exactly the structured output: `prompt` containing the full prompt as
-one block of text, and `alternates` (see ALTERNATE DIRECTIONS below — an empty
-list when revising). Do not generate an image. Do not add commentary.
+Return exactly the structured output: a single field `prompt` containing the
+full prompt as one block of text. Do not generate an image. Do not add
+commentary.
 
 ## The canonical skeleton (always follow this order)
 
@@ -118,23 +118,6 @@ matters, state the concrete hues you DO want, up front in MAIN ARTWORK and CAPSU
 a painter's-palette blend"). Never steer by forbidding a look, and never spell out
 a rainbow / ROYGBIV sequence you are trying to avoid — naming it only cues it.
 Reserve NEGATIVE CONSTRAINTS for true content prohibitions, not aesthetic nudges.
-
-## ALTERNATE DIRECTIONS (the `alternates` output field)
-
-{props.exploreDirections}
-
-Rules for alternates, when asked for above:
-
-- Each alternate is a **complete, standalone prompt** following the same
-  canonical skeleton — usable as-is with no reference to the primary.
-- Each must be a genuinely **different direction** (different hero-scene
-  concept, art direction, format, or copy angle per its stance) — not a
-  recolor or rewording of the primary.
-- Every alternate still obeys ALL the hard rules: the exact NAME, every
-  VERBATIM line character-for-character, and the full NEGATIVE CONSTRAINTS
-  list verbatim.
-- A human reviewer picks between the primary and the alternates; make each one
-  a take you would defend.
 
 ## Hard rules
 

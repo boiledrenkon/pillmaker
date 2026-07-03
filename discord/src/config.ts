@@ -74,6 +74,10 @@ export const config = {
   // to pre-fill the review modal. Uses the logged-in CLI (Max), no API key.
   expandCmd: opt("EXPAND_CMD", "claude"),
   expandModel: opt("EXPAND_MODEL", "claude-sonnet-4-6"),
+  // Pre-run direction pick: number of short artwork pitches offered in the
+  // thread before a run starts (0/1 = off, start immediately). Skipped anyway
+  // when the brief already provides `artwork`.
+  directions: Number(opt("DIRECTIONS", "3")),
 
   // Smithers control plane
   bearerToken: opt("SMITHERS_BEARER_TOKEN", ""),

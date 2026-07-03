@@ -22,9 +22,9 @@ import { resolve } from "node:path";
 import { config } from "./config";
 import { store, type RunRow } from "./store";
 import * as sm from "./smithers";
-import { cid, qcMessage, denyNoteModal, editPromptModal, conceptModal, startRow, stopDiscardRow, intakeCard, reqModal, expandedCard } from "./ui";
+import { cid, qcMessage, denyNoteModal, editPromptModal, conceptModal, startRow, stopDiscardRow, intakeCard, reqModal, expandedCard, directionRow } from "./ui";
 import { validateConcept, lines, type Concept } from "../../.smithers/shared/concept-schema";
-import { expandConcept, slugify, safeSlug } from "./expand";
+import { expandConcept, pitchDirections, slugify, safeSlug } from "./expand";
 
 const IMG_EXT = /\.(png|jpe?g|webp)$/i;
 const isImage = (ct: string | null, name: string, size: number) =>
@@ -49,30 +49,6 @@ async function latestCandidate(slug: string): Promise<AttachmentBuilder[]> {
   if (!existsSync(dir)) return [];
   const files = (await readdir(dir)).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).sort();
   return files.length ? [new AttachmentBuilder(resolve(dir, files[files.length - 1]))] : [];
-}
-
-// Distill a full direction prompt into a thread-readable pitch: the hero scene
-// plus what actually differs between directions (subtitle/secondary tagline,
-// dose, pack look). The reviewer decides from this in Discord — no attachment
-// required (some clients hide file chips next to embeds).
-function directionPitch(p: string): string {
-  const sect = (name: string, cap: number) => {
-    const m = p.match(new RegExp(`${name}\\n([\\s\\S]*?)(?=\\n[A-Z][A-Z /]{3,}\\n|$)`));
-    const t = (m?.[1] ?? "").trim().replace(/\s+/g, " ");
-    return t.length > cap ? t.slice(0, cap - 1) + "…" : t;
-  };
-  const line = (label: string) => p.match(new RegExp(`^${label}: (.*)$`, "m"))?.[1]?.trim() ?? "";
-  const dose = sect("THE DOSE", 220) || sect("CAPSULE", 220);
-  return [
-    sect("MAIN ARTWORK", 600),
-    [
-      line("Subtitle") && `**Subtitle:** ${line("Subtitle")}`,
-      line("Secondary tagline") && `**Tagline 2:** ${line("Secondary tagline")}`,
-      line("Bottom slogan") && `**Slogan:** ${line("Bottom slogan")}`,
-    ].filter(Boolean).join("\n"),
-    dose && `**Dose:** ${dose}`,
-    sect("PACKAGING STYLE", 220) && `**Pack:** ${sect("PACKAGING STYLE", 220)}`,
-  ].filter(Boolean).join("\n");
 }
 
 // The run's effective final prompt: the human's ✏️ Edit / Use-B pick when one
@@ -196,7 +172,48 @@ function uniqueSlug(name: string): string {
   return store.runBySlug(base) ? `${base}_${Date.now().toString(36).slice(-4)}` : base;
 }
 
-// Create the thread, kick off the run, record the mapping.
+// Kick off the actual smithers run in a thread + record the mapping. Every
+// start path (Start button, direction pick, /concept-json, requests, /rerun)
+// ends here.
+async function beginRun(concept: Concept, thread: ThreadChannel, requesterId: string | null): Promise<string> {
+  const runId = `${concept.slug}-${Date.now().toString(36)}`;
+  const inputJson = JSON.stringify(runInput(concept));
+  sm.startRun(runId, inputJson);
+  store.addRun({ runId, slug: concept.slug, threadId: thread.id, port: 0, requesterId, inputJson });
+  await thread.send(
+    `🚀 **${concept.name}** started (\`${runId}\`, backend=\`${config.backend}\`).\n` +
+      `I'll post prompt QC here, then ${config.backend === "manual" ? "ask you to drop the generated PNG" : "generate and post the image"}, then image QC.`,
+  );
+  await postStatus(`🚀 \`${concept.slug}\` started — ${concept.name}`);
+  return runId;
+}
+
+// Pre-run direction pick: author N SHORT artwork pitches and post them inline
+// with [1..N] + skip buttons; the run starts on click (the pick lands in the
+// concept's `artwork` field as a weighted seed for compose). Returns false —
+// meaning "start the run immediately instead" — when the knob is off, the
+// brief already directs the artwork, or pitch authoring fails; the pick is a
+// bonus, never a blocker.
+async function offerDirections(concept: Concept, thread: ThreadChannel, requesterId: string | null): Promise<boolean> {
+  if (config.directions < 2 || concept.artwork) return false;
+  const note = await thread.send("✨ Authoring direction options…").catch(() => null);
+  if (!note) return false;
+  const pitches = await pitchDirections(concept, config.directions);
+  if (pitches.length < 2) {
+    await note.delete().catch(() => {});
+    return false;
+  }
+  const token = `dir:${concept.slug}:${Date.now().toString(36)}`;
+  store.saveIntake(token, { concept, pitches, requesterId, threadId: thread.id });
+  const body = pitches.map((p, n) => `**${n + 1}.** ${p}`).join("\n\n");
+  await note.edit({
+    content: `🎨 **Pick a direction for the artwork** — or let compose decide:\n\n${body}`.slice(0, 1990),
+    components: [directionRow(token, pitches.length)],
+  }).catch(() => {});
+  return true;
+}
+
+// Create the thread and either offer the direction pick or start right away.
 async function launch(concept: Concept, qc: TextChannel, requesterId: string | null = null): Promise<string> {
   // Harden the slug before it touches the filesystem + the generate agent's shell
   // command. Single chokepoint: every launch path (/concept, /concept-json, and
@@ -208,16 +225,8 @@ async function launch(concept: Concept, qc: TextChannel, requesterId: string | n
     type: ChannelType.PublicThread,
     reason: `Concept run: ${concept.name}`,
   });
-  const runId = `${concept.slug}-${Date.now().toString(36)}`;
-  const inputJson = JSON.stringify(runInput(concept));
-  sm.startRun(runId, inputJson);
-  store.addRun({ runId, slug: concept.slug, threadId: thread.id, port: 0, requesterId, inputJson });
-  await thread.send(
-    `🚀 **${concept.name}** started (\`${runId}\`, backend=\`${config.backend}\`).\n` +
-      `I'll post prompt QC here, then ${config.backend === "manual" ? "ask you to drop the generated PNG" : "generate and post the image"}, then image QC.`,
-  );
-  await postStatus(`🚀 \`${concept.slug}\` started — ${concept.name}`);
-  return runId;
+  if (await offerDirections(concept, thread, requesterId)) return `<#${thread.id}> (pick a direction there to start)`;
+  return beginRun(concept, thread, requesterId);
 }
 
 // What we stash for an approved request between intake and launch.
@@ -400,7 +409,7 @@ async function onCommand(i: ChatInputCommandInteraction) {
     if (!concept) return void i.editReply("Couldn't read that run's concept — nothing to re-run.");
     const qc = (await client.channels.fetch(config.channels.qc)) as TextChannel;
     const runId = await launch(concept, qc, r.requesterId); // preserves requesterId → they get notified
-    return void i.editReply(`🔁 Re-ran \`${r.slug}\` as a fresh run \`${runId}\`${r.requesterId ? ` (still credited to <@${r.requesterId}>)` : ""}.`);
+    return void i.editReply(`🔁 Re-ran \`${r.slug}\` → ${runId}${r.requesterId ? ` (still credited to <@${r.requesterId}>)` : ""}`);
   }
 }
 
@@ -535,7 +544,7 @@ async function onModal(i: ModalSubmitInteraction) {
       store.saveIntake(token, stash); // keep it re-approvable so the card still works
       return void i.editReply(`❌ Brief invalid:\n• ${res.errors.join("\n• ")}\nThe request is still in the queue — Edit and submit again.`);
     }
-    await i.editReply(`🚀 Approved & launched \`${res.runId}\` for <@${stash.requesterId}>.`);
+    await i.editReply(`🚀 Approved & launched for <@${stash.requesterId}>: ${res.runId}`);
   }
 }
 
@@ -614,15 +623,15 @@ async function onButton(i: ButtonInteraction) {
     concept.refImages = await collectRefs(thread, concept.slug);
     const v = validateConcept(concept);
     if (!v.ok) return void i.editReply(`❌ Brief invalid:\n• ${v.errors.join("\n• ")}`);
-    const qc = (await client.channels.fetch(config.channels.qc)) as TextChannel;
-    // reuse THIS thread instead of creating a new one
-    const runId = `${v.value.slug}-${Date.now().toString(36)}`;
-    const inputJson = JSON.stringify(runInput(v.value));
-    sm.startRun(runId, inputJson);
-    store.addRun({ runId, slug: v.value.slug, threadId: thread.id, port: 0, inputJson });
-    await postStatus(`🚀 \`${v.value.slug}\` started — ${v.value.name}`);
     await i.message.edit({ components: [] }).catch(() => {}); // strip the now-spent Start button
-    await i.editReply(`🚀 Started \`${runId}\` (refs: ${v.value.refImages.length ? v.value.refImages.join(", ") : "none"}).`);
+    const refNote = `refs: ${v.value.refImages.length ? v.value.refImages.join(", ") : "none"}`;
+    // Direction pick first (reusing THIS thread); the run starts on the pick.
+    if (await offerDirections(v.value, thread, null)) {
+      await i.editReply(`🎨 Brief locked (${refNote}) — pick a direction below to start.`);
+      return;
+    }
+    const runId = await beginRun(v.value, thread, null);
+    await i.editReply(`🚀 Started \`${runId}\` (${refNote}).`);
     return;
   }
 
@@ -658,33 +667,25 @@ async function onButton(i: ButtonInteraction) {
     return;
   }
 
-  // "Use B/C" on a prompt-QC card: pick an alternate direction. Same mechanics
-  // as ✏️ Edit — the alternate's exact text becomes the run's final prompt
-  // (written where the workflow reads it) and the gate approves. Works no
-  // matter how the alternates were produced (single compose today, parallel
-  // composes someday) — this only reads sm.composeAlternates().
-  if (i.customId.startsWith("qcuse:")) {
-    // qcuse:<idx>:<runId>:<iteration>:<gateSuffix>
-    const parts = i.customId.split(":");
-    const idx = Number(parts[1]) || 0, runId = parts[2], iteration = Number(parts[3]) || 0, nodeId = cid.node(runId, parts.slice(4).join(":"));
-    const r = store.runById(runId);
-    if (!r) return void i.reply({ ephemeral: true, content: "Unknown run." });
-    const chosen = sm.composeAlternates(runId)[idx];
-    if (!chosen) return void i.reply({ ephemeral: true, content: "That direction is no longer available (a recompose replaced it) — use Approve / Deny / Edit." });
-    // Idempotence guard BEFORE any await: the slow approve+resume leaves the
-    // buttons clickable for seconds, so double-clicks re-fired the handler.
-    // hasSeen+mark are synchronous — the first click wins, the rest bounce.
-    const rkey = `resolved:${r.runId}:${iteration}:${nodeId}`;
-    if (store.hasSeen(rkey)) return void i.reply({ ephemeral: true, content: "Already decided — this gate is resolved." }).catch(() => {});
-    store.mark(rkey);
+  // Pre-run direction pick: [1..N] sets the pitch as the concept's artwork
+  // direction, 🎲 skips — either way the run starts now. takeIntake consumes
+  // the stash atomically, so double-clicks bounce on "already picked".
+  if (i.customId.startsWith("dirpick:")) {
+    // dirpick:<idx|skip>:<token>
+    const [, sel, ...rest] = i.customId.split(":");
+    const token = rest.join(":");
+    const stash = store.takeIntake<{ concept: Concept; pitches: string[]; requesterId: string | null; threadId: string }>(token);
+    if (!stash) return void i.reply({ ephemeral: true, content: "Already picked (or expired)." }).catch(() => {});
     await i.deferUpdate().catch(() => {});
-    await i.editReply({ components: [] }).catch(() => {}); // strip buttons FIRST, then do the slow work
-    const dir = resolve(config.projectRoot, `outputs/${r.slug}`);
-    await mkdir(dir, { recursive: true });
-    await writeFile(resolve(dir, `.edited-${runId}.txt`), chosen, "utf8");
-    await sm.approve(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username);
-    store.takeMsgRef(`card:${r.runId}:${iteration}:${nodeId}`);
-    await i.followUp(`🔀 Direction **${"BCD"[idx] ?? idx + 2}** chosen by <@${i.user.id}> — generating from it (primary skipped).`);
+    await i.editReply({ components: [] }).catch(() => {}); // strip pick buttons immediately
+    const idx = sel === "skip" ? -1 : Number(sel);
+    if (idx >= 0 && stash.pitches[idx]) stash.concept.artwork = stash.pitches[idx];
+    const thread = i.channel?.isThread() ? (i.channel as ThreadChannel) : await getThread(stash.threadId);
+    if (!thread) return void i.followUp({ ephemeral: true, content: "Thread is gone — relaunch the concept." }).catch(() => {});
+    const runId = await beginRun(stash.concept, thread, stash.requesterId);
+    await i.followUp(idx >= 0
+      ? `🎨 Direction **${idx + 1}** chosen by <@${i.user.id}> — \`${runId}\` is composing from it.`
+      : `🎲 Compose's call — \`${runId}\` running.`);
     return;
   }
 
@@ -861,39 +862,12 @@ async function tick() {
       } else {
         const isImg = g.kind === "image";
         const files = isImg ? await candidateAttachment(r.runId, r.slug) : [];
-        // Alternate directions (first compose only): offered as Use B / Use C,
-        // with the full text of every direction attached for side-by-side review.
-        const alts = isImg ? [] : sm.composeAlternates(r.runId);
-        let summary = isImg
-          ? "Review the generated image above and decide. Deny opens a note that feeds a regenerate."
-          : (sm.composedPrompt(r.runId) ?? "Prompt composed. Approve to generate, or Deny with a note to revise.");
-        if (alts.length) {
-          const warns = sm.alternateWarnings(r.runId);
-          // Post each direction as its own readable message ABOVE the card, so
-          // the reviewer decides entirely in the thread. The full prompts still
-          // ride along as a .txt for copy/archive purposes.
-          for (const [n, a] of alts.entries()) {
-            const L = "BCD"[n] ?? String(n + 2);
-            const w = warns.filter((x) => x.toUpperCase().startsWith(`${L}:`));
-            await thread.send(
-              `🔀 **Direction ${L}** — pick it with **Use ${L}** on the card below${w.length ? `\n⚠️ ${w.join(" · ")}` : ""}\n${directionPitch(a)}`.slice(0, 1990),
-            ).catch(() => {});
-          }
-          const txt = [
-            "=== PRIMARY (Approve) ===",
-            sm.composedPrompt(r.runId) ?? "(none)",
-            ...alts.map((a, n) => `\n=== DIRECTION ${"BCD"[n] ?? n + 2} (Use ${"BCD"[n] ?? n + 2}) ===\n${a}`),
-            ...(warns.length ? [`\n⚠️ Judge constraint warnings on alternates:\n${warns.map((w) => `- ${w}`).join("\n")}`] : []),
-          ].join("\n");
-          files.push(new AttachmentBuilder(Buffer.from(txt, "utf8"), { name: `${r.slug}-directions.txt` }));
-          // Prepend (summary is tail-truncated at Discord's embed cap).
-          summary = `🔀 ${alts.length} alternate direction(s) posted above${warns.length ? ` (⚠️ ${warns.length} judge warning(s))` : ""} — **Use B/C** generates from that one instead. Primary below:\n\n${summary}`;
-        }
         const card = qcMessage({
           runId: r.runId, nodeId: g.nodeId, iteration: g.iteration,
           title: `${isImg ? "🖼️ Image" : "📝 Prompt"} QC — ${r.slug}`,
-          summary,
-          alternates: alts.length,
+          summary: isImg
+            ? "Review the generated image above and decide. Deny opens a note that feeds a regenerate."
+            : (sm.composedPrompt(r.runId) ?? "Prompt composed. Approve to generate, or Deny with a note to revise."),
         });
         const sent = await thread.send({ ...card, files }).catch(() => null);
         if (sent) { store.mark(postedKey); store.saveMsgRef(`card:${r.runId}:${g.iteration}:${g.nodeId}`, thread.id, sent.id); }

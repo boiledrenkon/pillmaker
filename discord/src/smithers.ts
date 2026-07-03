@@ -134,35 +134,6 @@ export function composedPrompt(runId: string): string | null {
   return row?.prompt ?? null;
 }
 
-/** Alternate directions from the latest compose row (Use B / Use C options at
- *  the prompt gate). Empty on revision iterations by design, and on DBs from
- *  before the column existed (try/catch). */
-export function composeAlternates(runId: string): string[] {
-  try {
-    const row = sdb
-      .query(`SELECT alternates FROM compose WHERE run_id = ? ORDER BY iteration DESC LIMIT 1`)
-      .get(runId) as { alternates: string | null } | null;
-    const a = JSON.parse(row?.alternates ?? "[]");
-    return Array.isArray(a) ? a.filter((s) => typeof s === "string" && s.trim().length > 0) : [];
-  } catch {
-    return [];
-  }
-}
-
-/** Constraint warnings the prompt judge raised against the alternates
- *  ("B: names a real brand …"). Cosmetic — shown on the directions attachment. */
-export function alternateWarnings(runId: string): string[] {
-  try {
-    const row = sdb
-      .query(`SELECT alternate_warnings FROM prompt_judge WHERE run_id = ? ORDER BY iteration DESC LIMIT 1`)
-      .get(runId) as { alternate_warnings: string | null } | null;
-    const a = JSON.parse(row?.alternate_warnings ?? "[]");
-    return Array.isArray(a) ? a.map(String).filter(Boolean) : [];
-  } catch {
-    return [];
-  }
-}
-
 /** The image-judge's best-of-n pick from its latest row (absolute or
  *  project-relative path), or null. try/catch: DBs from before best-of-n have
  *  no best_image column. */

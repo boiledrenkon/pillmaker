@@ -23,9 +23,6 @@ export const cid = {
   deny: (runId: string, nodeId: string, iter: number) => `qc:deny:${runId}:${iter}:${gateSuffix(nodeId)}`,
   denyModal: (runId: string, nodeId: string, iter: number) => `denynote:${runId}:${iter}:${gateSuffix(nodeId)}`,
   editPrompt: (runId: string, nodeId: string, iter: number) => `qcedit:${runId}:${iter}:${gateSuffix(nodeId)}`,
-  // Pick alternate direction <idx> (0 = "B", 1 = "C") instead of the primary.
-  // 5-part like qc:* — the handler splits it manually, not via cid.parse.
-  useAlt: (runId: string, nodeId: string, iter: number, idx: number) => `qcuse:${idx}:${runId}:${iter}:${gateSuffix(nodeId)}`,
   editModal: (runId: string, nodeId: string, iter: number) => `editmodal:${runId}:${iter}:${gateSuffix(nodeId)}`,
   start: (token: string) => `start:${token}`,
   reqEdit: (token: string) => `reqedit:${token}`,
@@ -43,9 +40,6 @@ export const cid = {
 
 export function qcMessage(opts: {
   runId: string; nodeId: string; iteration: number; title: string; summary: string;
-  // Number of alternate directions available (prompt gates only) → adds a
-  // "Use B" / "Use C" row. 0/undefined = classic card.
-  alternates?: number;
 }): { embeds: EmbedBuilder[]; components: ActionRowBuilder<ButtonBuilder>[] } {
   const kind = opts.nodeId.includes("image") ? "🖼️ Image QC" : "📝 Prompt QC";
   const embed = new EmbedBuilder()
@@ -61,21 +55,19 @@ export function qcMessage(opts: {
   if (!opts.nodeId.includes("image")) {
     buttons.splice(1, 0, new ButtonBuilder().setCustomId(cid.editPrompt(opts.runId, opts.nodeId, opts.iteration)).setLabel("✏️ Edit").setStyle(ButtonStyle.Primary));
   }
-  const rows = [new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons)];
-  // Alternate directions (first compose only): Approve = primary ("A"); these
-  // pick B/C instead — same mechanics as ✏️ Edit (exact text becomes final).
-  const nAlts = Math.min(opts.alternates ?? 0, 3);
-  if (nAlts > 0 && !opts.nodeId.includes("image")) {
-    rows.push(new ActionRowBuilder<ButtonBuilder>().addComponents(
-      ...Array.from({ length: nAlts }, (_, idx) =>
-        new ButtonBuilder()
-          .setCustomId(cid.useAlt(opts.runId, opts.nodeId, opts.iteration, idx))
-          .setLabel(`Use ${"BCD"[idx]}`)
-          .setStyle(ButtonStyle.Secondary),
-      ),
-    ));
+  const row = new ActionRowBuilder<ButtonBuilder>().addComponents(...buttons);
+  return { embeds: [embed], components: [row] };
+}
+
+// Pre-run direction pick: numbered buttons matching the short pitches posted
+// in the thread, plus a "let compose decide" skip. The run starts on click.
+export function directionRow(token: string, n: number): ActionRowBuilder<ButtonBuilder> {
+  const row = new ActionRowBuilder<ButtonBuilder>();
+  for (let i = 0; i < Math.min(n, 4); i++) {
+    row.addComponents(new ButtonBuilder().setCustomId(`dirpick:${i}:${token}`).setLabel(String(i + 1)).setStyle(ButtonStyle.Primary));
   }
-  return { embeds: [embed], components: rows };
+  row.addComponents(new ButtonBuilder().setCustomId(`dirpick:skip:${token}`).setLabel("🎲 Compose decides").setStyle(ButtonStyle.Secondary));
+  return row;
 }
 
 // Modal to edit the composed prompt directly. The submitted text becomes the

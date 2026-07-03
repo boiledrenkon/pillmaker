@@ -112,6 +112,48 @@ export async function expandConcept(
   }
 }
 
+// ── pre-run direction pitches ────────────────────────────────────────────────
+// Short, reviewable artwork directions offered in the thread BEFORE the run
+// starts. The chosen pitch lands in the concept's `artwork` field (a weighted
+// seed) and compose expands only that one into the full prompt.
+const PITCH_SYSTEM = (n: number) => `You are the art director for a line of fictional
+NOVELTY PARODY "enhancement" counter products (capsule blister packs, chewables,
+honey-pack sachets — gas-station retail humor, clearly fake, SFW). Given a concept
+brief, propose ${n} DISTINCT directions for the pack's hero artwork.
+
+Each direction is ONE punchy paragraph, UNDER 300 characters, containing: the
+hero-scene idea, one short copy hook in ALL CAPS, and the art-direction look
+(palette / typography / finish / dose format). Make the ${n} directions genuinely
+different takes — different scene, different angle, different look — never
+variations of one idea. No real brands or copyrighted characters.
+
+Return ONLY a JSON array of ${n} strings. No markdown fences, no commentary.`;
+
+export async function pitchDirections(
+  c: { name: string; theme: string; gender: string; extraInstructions?: string | null },
+  n = 3,
+): Promise<string[]> {
+  const user = [
+    `Product: ${c.name}`,
+    `Audience: ${c.gender} (who it's sold to — not necessarily who appears in the artwork)`,
+    `Theme: ${c.theme}`,
+    c.extraInstructions ? `Notes: ${c.extraInstructions}` : "",
+  ].filter(Boolean).join("\n");
+  try {
+    const raw = await runClaude(`${PITCH_SYSTEM(n)}\n\n---\n${user}`);
+    const fenced = raw.replace(/```(?:json)?/gi, "").trim();
+    const s = fenced.indexOf("["), e = fenced.lastIndexOf("]");
+    if (s === -1 || e <= s) return [];
+    const arr = JSON.parse(fenced.slice(s, e + 1));
+    return Array.isArray(arr)
+      ? arr.map((x: unknown) => String(x).trim().slice(0, 350)).filter(Boolean).slice(0, n)
+      : [];
+  } catch (err) {
+    dbg("pitch failed", String(err));
+    return [];
+  }
+}
+
 /** Deterministic folder slug from a product name (auto-derived; admin no longer
  *  types it). Lowercase, alnum→underscore, trimmed; caller adds uniqueness. */
 export function slugify(name: string): string {
