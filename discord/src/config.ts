@@ -66,6 +66,8 @@ export const config = {
   composeModel: opt("COMPOSE_MODEL", "claudeSonnet"),       // compose revisions
   composeFirstModel: opt("COMPOSE_FIRST_MODEL", "claudeOpus"), // first compose = Opus quality
   judgeModel: opt("JUDGE_MODEL", "claudeSonnet"),
+  // Mechanical tool tasks (run the generator command, finalize files): cheap+fast.
+  toolModel: opt("TOOL_MODEL", "claudeSonnet"),
 
   // Request-intake auto-expansion: when an admin approves a loose /request, a
   // one-shot `claude -p` call authors a full concept (name/theme/tagline/copy)
