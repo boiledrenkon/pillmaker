@@ -476,14 +476,18 @@ async function onModal(i: ModalSubmitInteraction) {
   if (i.customId.startsWith("denynote:")) {
     const { runId, iteration, nodeId } = cid.parse(i.customId);
     const note = i.fields.getTextInputValue("note");
+    const r = store.runById(runId);
+    // Idempotence guard BEFORE any await: another click/submit may already have
+    // resolved this gate while the modal was open.
+    const dkey = `resolved:${runId}:${iteration}:${nodeId}`;
+    if (store.hasSeen(dkey)) return void i.reply({ ephemeral: true, content: "Already decided — this gate was resolved while the note was open." }).catch(() => {});
+    if (r) store.mark(dkey);
     // Ack within Discord's 3s window BEFORE the slow smithers deny+resume (a
     // `bunx` cold-start can exceed 3s on a small VPS → "interaction failed").
     await i.deferReply().catch(() => {});
-    const r = store.runById(runId);
     if (r) {
-      store.mark(`resolved:${r.runId}:${iteration}:${nodeId}`);
-      await sm.deny(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username, note);
       await clearCardButtons(`card:${runId}:${iteration}:${nodeId}`);
+      await sm.deny(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username, note);
     }
     await i.editReply(`❌ Denied by <@${i.user.id}> — _${note}_`);
     return;
@@ -495,15 +499,19 @@ async function onModal(i: ModalSubmitInteraction) {
   if (i.customId.startsWith("editmodal:")) {
     const { runId, iteration, nodeId } = cid.parse(i.customId);
     const edited = i.fields.getTextInputValue("prompt");
-    await i.deferReply().catch(() => {}); // ack before the slow approve+resume
     const r = store.runById(runId);
-    if (!r) return void i.editReply("Unknown run.");
+    if (!r) return void i.reply({ ephemeral: true, content: "Unknown run." }).catch(() => {});
+    // Idempotence guard BEFORE any await (another click may have resolved the
+    // gate while the edit modal was open).
+    const ekey = `resolved:${r.runId}:${iteration}:${nodeId}`;
+    if (store.hasSeen(ekey)) return void i.reply({ ephemeral: true, content: "Already decided — this gate was resolved while the editor was open." }).catch(() => {});
+    store.mark(ekey);
+    await i.deferReply().catch(() => {}); // ack before the slow approve+resume
+    await clearCardButtons(`card:${runId}:${iteration}:${nodeId}`);
     const dir = resolve(config.projectRoot, `outputs/${r.slug}`);
     await mkdir(dir, { recursive: true });
     await writeFile(resolve(dir, `.edited-${runId}.txt`), edited, "utf8");
-    store.mark(`resolved:${r.runId}:${iteration}:${nodeId}`);
     await sm.approve(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username);
-    await clearCardButtons(`card:${runId}:${iteration}:${nodeId}`);
     await i.editReply(`✏️ Prompt edited by <@${i.user.id}> — generating from your exact version (auto-QC skipped).`);
     return;
   }
@@ -663,13 +671,18 @@ async function onButton(i: ButtonInteraction) {
     if (!r) return void i.reply({ ephemeral: true, content: "Unknown run." });
     const chosen = sm.composeAlternates(runId)[idx];
     if (!chosen) return void i.reply({ ephemeral: true, content: "That direction is no longer available (a recompose replaced it) — use Approve / Deny / Edit." });
-    await i.deferUpdate().catch(() => {}); // ack before the slow approve+resume
+    // Idempotence guard BEFORE any await: the slow approve+resume leaves the
+    // buttons clickable for seconds, so double-clicks re-fired the handler.
+    // hasSeen+mark are synchronous — the first click wins, the rest bounce.
+    const rkey = `resolved:${r.runId}:${iteration}:${nodeId}`;
+    if (store.hasSeen(rkey)) return void i.reply({ ephemeral: true, content: "Already decided — this gate is resolved." }).catch(() => {});
+    store.mark(rkey);
+    await i.deferUpdate().catch(() => {});
+    await i.editReply({ components: [] }).catch(() => {}); // strip buttons FIRST, then do the slow work
     const dir = resolve(config.projectRoot, `outputs/${r.slug}`);
     await mkdir(dir, { recursive: true });
     await writeFile(resolve(dir, `.edited-${runId}.txt`), chosen, "utf8");
-    store.mark(`resolved:${r.runId}:${iteration}:${nodeId}`);
     await sm.approve(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username);
-    await i.editReply({ components: [] }).catch(() => {});
     store.takeMsgRef(`card:${r.runId}:${iteration}:${nodeId}`);
     await i.followUp(`🔀 Direction **${"BCD"[idx] ?? idx + 2}** chosen by <@${i.user.id}> — generating from it (primary skipped).`);
     return;
@@ -683,12 +696,15 @@ async function onButton(i: ButtonInteraction) {
     const r = store.runById(runId);
     if (!r) return void i.reply({ ephemeral: true, content: "Unknown run." });
     if (realKind === "deny") return void i.showModal(denyNoteModal(runId, nodeId, iteration));
-    // Ack within Discord's 3s window BEFORE the slow smithers approve+resume
-    // (a `bunx` cold-start can exceed 3s on a small VPS → "interaction failed").
+    // Idempotence guard BEFORE any await (double-click protection), then ack
+    // within Discord's 3s window and strip the buttons BEFORE the slow
+    // smithers approve+resume (a `bunx` cold-start can exceed 3s).
+    const akey = `resolved:${r.runId}:${iteration}:${nodeId}`;
+    if (store.hasSeen(akey)) return void i.reply({ ephemeral: true, content: "Already decided — this gate is resolved." }).catch(() => {});
+    store.mark(akey);
     await i.deferUpdate().catch(() => {});
-    store.mark(`resolved:${r.runId}:${iteration}:${nodeId}`);
-    await sm.approve(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username);
     await i.editReply({ components: [] }).catch(() => {});
+    await sm.approve(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username);
     store.takeMsgRef(`card:${r.runId}:${iteration}:${nodeId}`); // drop the now-resolved card ref
     await i.followUp(`✅ Approved by <@${i.user.id}>.`);
   }
