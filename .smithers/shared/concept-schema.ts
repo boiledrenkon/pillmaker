@@ -30,6 +30,7 @@ export const conceptSchema = z.object({
   copyLines: z.array(z.string()).default([]).describe("supporting copy lines; prefix a line with '=' to force it verbatim"),
   bottomSlogan: z.string().nullable().default(null),
   capsule: z.string().nullable().default(null),
+  format: z.string().nullable().default(null).describe("dose format, e.g. 'single capsule blister', 'gummy pouch', 'honey pack sachet' — blank = compose picks from the theme (capsule blister is the classic)"),
   packagingStyle: z.string().nullable().default(null),
 
   // --- inputs & constraints ---
@@ -44,6 +45,7 @@ export const inputSchema = z.object({
   composeModel: z.enum(["claude", "claudeSonnet", "claudeOpus"]).default("claude").describe("model for compose REVISIONS (iterations after the first)"),
   composeFirstModel: z.enum(["claude", "claudeSonnet", "claudeOpus"]).default("claudeOpus").describe("model for the FIRST compose (quality where it counts most)"),
   judgeModel: z.enum(["claude", "claudeSonnet", "claudeOpus"]).default("claude"),
+  toolModel: z.enum(["claude", "claudeSonnet", "claudeOpus"]).default("claudeSonnet").describe("model for mechanical tool tasks (run the generator command, finalize files) — cheap is fine"),
   promptQc: z.enum(["off", "auto", "human", "both"]).default("both"),
   imageQc: z.enum(["off", "auto", "human", "both"]).default("both"),
   maxAttempts: z.number().int().min(1).default(3),
@@ -119,7 +121,7 @@ export function lines(text: string | null | undefined): string[] {
 // Copy fields that honor the VERBATIM_MARKER ("=") prefix.
 const MARKABLE_FIELDS = [
   "title", "subtitle", "mainTagline", "secondaryTagline",
-  "bottomSlogan", "capsule", "packagingStyle", "artwork",
+  "bottomSlogan", "capsule", "format", "packagingStyle", "artwork",
 ] as const;
 
 /**

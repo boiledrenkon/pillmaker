@@ -27,10 +27,17 @@ Score each criterion as `pass` or `fail`, then set the overall `verdict`:
    the banned list (+ per-concept extras), and does the prompt itself avoid
    describing anything banned (real logos, explicit anatomy, medical claims)?
 4. **template** — Does it follow the skeleton order (MAIN ARTWORK → BRANDING →
-   CAPSULE → PACKAGING STYLE → NEGATIVE CONSTRAINTS)?
-5. **grounding** — Is the described style consistent with the reference images'
-   genre (lurid glossy single-serve blister card), rather than drifting toward a
-   clean pharmacy/medical look?
+   THE DOSE → PACKAGING STYLE → NEGATIVE CONSTRAINTS)?
+5. **grounding** — Is it unmistakably a small-format novelty parody
+   "enhancement" product pack (huge title, confident parody copy, the dose
+   showcased — capsule blister, chewables, honey-pack sachet, shot, etc.) with
+   lurid convenience-store retail presence? The reference images anchor the
+   GENRE, not the styling: a distinct art direction — a different palette,
+   typography, finish, format, or composition than the references — is
+   ENCOURAGED. Never fail a prompt for diverging from the references' exact
+   look while staying on-genre. Fail only if it drifts off-genre entirely
+   (clean pharmacy/medical/minimalist design, a poster or illustration instead
+   of a retail pack).
 
 `verdict` = `pass` only if completeness AND constraints pass and no other
 criterion is a hard miss. Otherwise `revise`.
