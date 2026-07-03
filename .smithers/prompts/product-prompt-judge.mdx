@@ -18,11 +18,16 @@ Score each criterion as `pass` or `fail`, then set the overall `verdict`:
      line for being rephrased or shortened. Only `fail` if a plain line's intent
      was dropped entirely or no copy appears at all. Never demand a plain
      (non-VERBATIM) line be reproduced word-for-word.
-2. **faithfulness** — Does the artwork/theme match the spec's theme, gender, tags,
-   and extra instructions, with no contradictions? EXCEPTION: where a human
-   reviewer note (see "Human reviewer direction" below) overrides a spec
-   instruction, following the human is what counts as faithful — do NOT fail this
-   for contradicting the now-superseded spec wording.
+2. **faithfulness** — Does the artwork/theme match the spec's theme, tags, and
+   extra instructions, with no contradictions? (`gender` is the target AUDIENCE
+   — it steers copy voice and appeal, and does NOT require that gender to appear
+   in the artwork; never fail a prompt for an artwork cast that fits the theme
+   or the human's direction.) EXCEPTION: where a human reviewer note (see
+   "Human reviewer direction" below) overrides a spec instruction, following
+   the human is what counts as faithful — do NOT fail this for contradicting
+   the now-superseded spec wording. Conversely, a prompt that IGNORES or
+   CONTRADICTS the human's direction MUST fail faithfulness — obeying the note
+   is mandatory, not optional. Quote the disobeyed instruction in `issues`.
 3. **constraints** — Does the prompt include a NEGATIVE CONSTRAINTS block covering
    the banned list (+ per-concept extras), and does the prompt itself avoid
    describing anything banned (real logos, explicit anatomy, medical claims)?
