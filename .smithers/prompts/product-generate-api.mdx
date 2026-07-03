@@ -21,9 +21,10 @@ substitute any part of it):
 ## Step 3 — return the result
 
 The command prints one JSON line. Return `slug` = {props.slug}, plus `imagePath`,
-`ok`, and `note` taken from that JSON line.
+`candidates`, `ok`, and `note` taken from that JSON line (if the JSON has no
+`candidates` field, return a one-element list containing `imagePath`).
 
-- On success it wrote a PNG to {props.savePath}.
+- On success it wrote one or more PNG candidates (the first at {props.savePath}).
 - On failure (the JSON has `ok: false`, or the command errored), return
   `ok: false` and put the command's error message in `note`. Do NOT retry inside
   this task and do NOT fabricate a path — the workflow handles regeneration.

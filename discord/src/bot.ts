@@ -51,6 +51,17 @@ async function latestCandidate(slug: string): Promise<AttachmentBuilder[]> {
   return files.length ? [new AttachmentBuilder(resolve(dir, files[files.length - 1]))] : [];
 }
 
+// Image for the image-QC card: the judge's best-of-n pick when available (that
+// is the image the approve/deny decision applies to), else the newest candidate.
+async function candidateAttachment(runId: string, slug: string): Promise<AttachmentBuilder[]> {
+  const best = sm.judgeBest(runId);
+  if (best) {
+    const p = resolve(config.projectRoot, best); // absolute paths pass through
+    if (existsSync(p)) return [new AttachmentBuilder(p)];
+  }
+  return latestCandidate(slug);
+}
+
 async function getThread(threadId: string): Promise<ThreadChannel | null> {
   const ch = await client.channels.fetch(threadId).catch(() => null);
   return ch && ch.isThread() ? (ch as ThreadChannel) : null;
@@ -126,6 +137,7 @@ function runInput(concept: Concept) {
     composeModel: config.composeModel,
     composeFirstModel: config.composeFirstModel,
     judgeModel: config.judgeModel,
+    toolModel: config.toolModel,
   };
 }
 
@@ -769,7 +781,7 @@ async function tick() {
         if (msg) { store.mark(postedKey); store.saveMsgRef(`drop:${r.runId}:${g.iteration}`, thread.id, msg.id); }
       } else {
         const isImg = g.kind === "image";
-        const files = isImg ? await latestCandidate(r.slug) : [];
+        const files = isImg ? await candidateAttachment(r.runId, r.slug) : [];
         const card = qcMessage({
           runId: r.runId, nodeId: g.nodeId, iteration: g.iteration,
           title: `${isImg ? "🖼️ Image" : "📝 Prompt"} QC — ${r.slug}`,

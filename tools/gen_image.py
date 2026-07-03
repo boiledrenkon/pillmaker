@@ -50,8 +50,13 @@ def _expand_refs(refs: list[str], cap: int = 6) -> list[Path]:
     return uniq[:cap]
 
 
+# Sibling paths for extra best-of-n candidates: attempt2.png -> attempt2b.png…
+def _candidate_path(out: Path, i: int) -> Path:
+    return out if i == 0 else out.with_name(f"{out.stem}{chr(ord('a') + i)}{out.suffix}")
+
+
 # ---------------------------------------------------------------- OpenAI -----
-def gen_openai(prompt: str, refs: list[Path], out: Path, model: str, size: str, quality: str) -> None:
+def gen_openai(prompt: str, refs: list[Path], out: Path, model: str, size: str, quality: str, n: int) -> list[Path]:
     from openai import OpenAI  # noqa
     import base64
 
@@ -63,21 +68,37 @@ def gen_openai(prompt: str, refs: list[Path], out: Path, model: str, size: str, 
     common = {"model": model, "prompt": prompt, "size": size}
     if quality and quality != "auto":
         common["quality"] = quality
-    if refs:
-        files = [open(p, "rb") for p in refs]
-        try:
-            res = client.images.edit(image=files, **common)
-        finally:
-            for f in files:
-                f.close()
-    else:
-        res = client.images.generate(**common)
-    b64 = res.data[0].b64_json
-    out.write_bytes(base64.b64decode(b64))
+
+    def call(count: int):
+        req = dict(common, n=count) if count > 1 else common
+        if refs:
+            files = [open(p, "rb") for p in refs]
+            try:
+                return client.images.edit(image=files, **req)
+            finally:
+                for f in files:
+                    f.close()
+        return client.images.generate(**req)
+
+    try:
+        res = call(n)
+    except Exception:
+        if n <= 1:
+            raise
+        # Some models/endpoints may not take n>1 — fall back to a single image
+        # rather than failing the whole attempt.
+        res = call(1)
+
+    paths: list[Path] = []
+    for i, item in enumerate(res.data):
+        p = _candidate_path(out, i)
+        p.write_bytes(base64.b64decode(item.b64_json))
+        paths.append(p)
+    return paths
 
 
 # ---------------------------------------------------------------- Gemini -----
-def gen_gemini(prompt: str, refs: list[Path], out: Path, model: str, size: str) -> None:
+def gen_gemini(prompt: str, refs: list[Path], out: Path, model: str, size: str) -> list[Path]:
     from google import genai            # google-genai
     from google.genai import types
 
@@ -92,12 +113,12 @@ def gen_gemini(prompt: str, refs: list[Path], out: Path, model: str, size: str) 
         inline = getattr(part, "inline_data", None)
         if inline and inline.data:
             out.write_bytes(inline.data)
-            return
+            return [out]
     raise RuntimeError("Gemini returned no image part (likely a safety block or text-only reply).")
 
 
 # ------------------------------------------------------------- Replicate -----
-def gen_replicate(prompt: str, refs: list[Path], out: Path, model: str, size: str) -> None:
+def gen_replicate(prompt: str, refs: list[Path], out: Path, model: str, size: str) -> list[Path]:
     import replicate
     import requests
 
@@ -110,11 +131,13 @@ def gen_replicate(prompt: str, refs: list[Path], out: Path, model: str, size: st
     url = result[0] if isinstance(result, (list, tuple)) else result
     url = getattr(url, "url", url)  # FileOutput -> url
     out.write_bytes(requests.get(str(url), timeout=120).content)
+    return [out]
 
 
-# gemini/replicate don't take an OpenAI-style quality tier; absorb+ignore it.
+# gemini/replicate take neither an OpenAI-style quality tier nor n>1 (they
+# always produce one candidate); absorb+ignore both.
 def _drop_quality(fn):
-    def wrapped(prompt, refs, out, model, size, quality):  # noqa: ARG001
+    def wrapped(prompt, refs, out, model, size, quality, n):  # noqa: ARG001
         return fn(prompt, refs, out, model, size)
     return wrapped
 
@@ -136,7 +159,10 @@ def main() -> int:
     ap.add_argument("--size", default=DEFAULT_SIZE)
     ap.add_argument("--quality", default=os.environ.get("IMG_QUALITY", "medium"),
                     help="openai gpt-image-1 tier: low|medium|high|auto (env IMG_QUALITY)")
+    ap.add_argument("--n", type=int, default=int(os.environ.get("IMG_N", "1") or 1),
+                    help="candidates per attempt, best-of-n (openai only; env IMG_N)")
     args = ap.parse_args()
+    n = max(1, min(4, args.n))
 
     prompt = Path(args.prompt_file).read_text(encoding="utf-8").strip()
     if not prompt:
@@ -146,17 +172,19 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        BACKENDS[args.backend](prompt, refs, out, args.model, args.size, args.quality)
+        paths = BACKENDS[args.backend](prompt, refs, out, args.model, args.size, args.quality, n)
     except ImportError as e:
         return _fail(f"SDK for backend '{args.backend}' not installed: {e}. "
                      f"pip install the backend SDK (openai | google-genai | replicate).")
     except Exception as e:  # noqa: BLE001 — surface any backend error to the agent
         return _fail(f"{args.backend} generation failed: {type(e).__name__}: {e}")
 
-    if not out.exists() or out.stat().st_size < 1000:
+    paths = [p for p in paths if p.exists() and p.stat().st_size >= 1000]
+    if not paths:
         return _fail("backend produced no usable image file")
-    print(json.dumps({"ok": True, "imagePath": str(out),
-                      "note": f"{args.backend} wrote {out.stat().st_size} bytes "
+    print(json.dumps({"ok": True, "imagePath": str(paths[0]),
+                      "candidates": [str(p) for p in paths],
+                      "note": f"{args.backend} wrote {len(paths)} candidate(s) "
                               f"using {len(refs)} reference image(s)."}))
     return 0
 

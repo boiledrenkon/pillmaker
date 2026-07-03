@@ -34,11 +34,13 @@ const promptJudgeSchema = z.object({
 const generateSchema = z.object({
   slug: z.string().default(""),
   imagePath: z.string().nullable().default(null),
+  candidates: z.array(z.string()).default([]),
   ok: z.boolean().default(false),
   note: z.string().default(""),
 });
 const imageJudgeSchema = z.object({
   verdict: z.enum(["accept", "reject"]).default("reject"),
+  bestImage: z.string().nullable().default(null),
   promptAdherence: qc, textLegibility: qc, constraintCompliance: qc, styleMatch: qc,
   issues: z.array(z.string()).default([]),
   suggestions: z.string().default(""),
@@ -74,7 +76,9 @@ export default smithers((ctx) => {
   const backend = input.backend ?? "manual";
   // compose agent is chosen per-iteration inside renderConcept (Opus first, then composeModel).
   const judgeAgents = [providers[input.judgeModel ?? "claude"]];
-  const toolAgents = [providers.claude]; // generation + finalize need bash/write tools
+  // Mechanical tool tasks (run the generator command, finalize files) need
+  // bash/write tools but zero creativity — default to the cheap/fast model.
+  const toolAgents = [providers[input.toolModel ?? "claudeSonnet"]];
   const maxAttempts = input.maxAttempts ?? 3;
   const maxMachineRetries = input.maxMachineRetries ?? 3;
   const maxHumanRetries = input.maxHumanRetries ?? 3;
@@ -110,6 +114,21 @@ export default smithers((ctx) => {
       nodeId,
     ) === 1;
 
+  // Latest string column for a node, read like countRows (terminal reads must
+  // not use frame-scoped outputMaybe — it can hand back a stale iteration).
+  const latestStr = (sql: string, ...params: (string | number)[]): string => {
+    try {
+      const d = new Database(process.env.SMITHERS_DB ?? "smithers.db", { readonly: true });
+      try {
+        return (d.query(sql).get(...params) as { v?: string | null } | null)?.v ?? "";
+      } finally {
+        d.close();
+      }
+    } catch {
+      return "";
+    }
+  };
+
   const promptAutoOn = input.promptQc === "auto" || input.promptQc === "both";
   const promptHumanOn = input.promptQc === "human" || input.promptQc === "both";
   const imageAutoOn = input.imageQc === "auto" || input.imageQc === "both";
@@ -136,9 +155,21 @@ export default smithers((ctx) => {
     );
   }
 
-  // Preflight: confirm the chosen backend's key exists (manual needs none).
-  const preflight = read("preflight", "preflight");
-  const proceed = backend === "manual" || preflight?.ok === true;
+  // Preflight in CODE, not an agent — it's just "is the backend's env key set?".
+  // Bun auto-loads the project-root .env, and the bot passes its env through, so
+  // the key is visible here. Approving the block gate overrides and tries anyway.
+  const REQUIRED_KEY: Record<string, string | undefined> = {
+    manual: undefined,
+    openai: "OPENAI_API_KEY",
+    gemini: "GEMINI_API_KEY",
+    replicate: "REPLICATE_API_TOKEN",
+  };
+  const requiredKey = REQUIRED_KEY[backend];
+  const keyOk =
+    !requiredKey ||
+    !!process.env[requiredKey] ||
+    (backend === "gemini" && !!process.env.GOOGLE_API_KEY); // common alias
+  const proceed = keyOk || read("approval", "preflight-block")?.approved === true;
 
   function renderConcept(concept: z.infer<typeof conceptSchema>) {
     const slug = concept.slug;
@@ -233,6 +264,10 @@ export default smithers((ctx) => {
     const lastGen = read("generate", `${slug}:generate`);
     const lastImageJudge = read("imageJudge", `${slug}:image-judge`);
     const imageApproval = read("approval", `${slug}:approve-image`);
+    // Best-of-n: the judge sees every candidate from the last attempt and picks
+    // one (bestImage). That pick is what the human gate and finalize use.
+    const candidateLines = ((lastGen?.candidates?.length ? lastGen.candidates : [lastGen?.imagePath]).filter(Boolean) as string[]).join("\n") || savePath;
+    const chosenImage = (imageAutoOn ? lastImageJudge?.bestImage : null) || lastGen?.imagePath || null;
     const judgeRegenNote =
       imageAutoOn && lastImageJudge?.verdict === "reject"
         ? `PREVIOUS IMAGE WAS REJECTED (auto-QC). Address: ${(lastImageJudge.issues ?? []).join("; ")}. ${lastImageJudge.suggestions ?? ""}`
@@ -281,8 +316,16 @@ export default smithers((ctx) => {
         : imageAutoOn
           ? (lastImageJudge?.verdict === "accept" ? "accepted" : "rejected")
           : (finalGen?.ok === true ? "accepted" : "rejected");
-    const acceptedPath = status === "accepted" ? finalGen?.imagePath ?? "" : "";
-    const candidatesList = genRows.map((r: any) => r.imagePath).filter(Boolean).join("\n") || "(none)";
+    // Prefer the judge's best-of-n pick from the LATEST judge row (terminal
+    // read); fall back to the last attempt's primary image.
+    const latestBest = imageAutoOn
+      ? latestStr(`SELECT best_image v FROM image_judge WHERE run_id=? AND node_id=? ORDER BY iteration DESC LIMIT 1`, ctx.runId, `${slug}:image-judge`)
+      : "";
+    const acceptedPath = status === "accepted" ? (latestBest || finalGen?.imagePath || "") : "";
+    const candidatesList = genRows
+      .flatMap((r: any) => (r.candidates?.length ? r.candidates : [r.imagePath]))
+      .filter(Boolean)
+      .join("\n") || "(none)";
 
     return (
       <Sequence key={slug}>
@@ -351,7 +394,7 @@ export default smithers((ctx) => {
                     then={
                       <Task id={`${slug}:image-judge`} output={outputs.imageJudge} agent={judgeAgents} timeoutMs={900_000} heartbeatTimeoutMs={300_000}>
                         <ImageJudge
-                          imagePath={lastGen?.imagePath ?? savePath}
+                          candidates={candidateLines}
                           prompt={finalPrompt}
                           spec={spec}
                           banned={banned}
@@ -374,9 +417,9 @@ export default smithers((ctx) => {
                           title: `Approve IMAGE for "${concept.name}" (${slug})?`,
                           summary:
                             `${imageAutoStuckRaw ? "⚠️ Auto-QC used up its retries — FINAL human call. Approve to accept this attempt, or Deny+note to try again.\n" : ""}` +
-                            `Candidate: ${lastGen?.imagePath ?? "(none)"}\nauto-QC: ${lastImageJudge ? lastImageJudge.verdict : "off"} ` +
+                            `Candidate: ${chosenImage ?? "(none)"}\nauto-QC: ${lastImageJudge ? lastImageJudge.verdict : "off"} ` +
                             `${lastImageJudge ? `(issues: ${(lastImageJudge.issues ?? []).length})` : ""}`,
-                          metadata: { slug, imagePath: lastGen?.imagePath ?? null, autoVerdict: lastImageJudge?.verdict ?? "off", override: imageAutoStuckRaw },
+                          metadata: { slug, imagePath: chosenImage, autoVerdict: lastImageJudge?.verdict ?? "off", override: imageAutoStuckRaw },
                         }}
                       />
                     }
@@ -404,29 +447,22 @@ export default smithers((ctx) => {
 
   return (
     <Workflow name="enhancement-product">
-      <Sequence>
-        <Task id="preflight" output={outputs.preflight} agent={toolAgents} timeoutMs={300_000} heartbeatTimeoutMs={120_000}>
-          {`Run from the project root: python3 tools/preflight.py --backend ${backend}\n` +
-            `It prints one JSON line and exits non-zero if a required API key is missing. ` +
-            `Return { backend, ok, message } from its output (ok=false if it exited non-zero).`}
-        </Task>
-        <Branch
-          if={proceed}
-          then={<Sequence>{concepts.map((c) => renderConcept(c))}</Sequence>}
-          else={
-            <Approval
-              id="preflight-block"
-              output={outputs.approval}
-              onDeny="continue"
-              request={{
-                title: `Missing API key for backend "${backend}"`,
-                summary: preflight?.message ?? `Set the key for ${backend}, or re-run with backend=manual (no key needed). Approve to override and try anyway.`,
-                metadata: { backend },
-              }}
-            />
-          }
-        />
-      </Sequence>
+      <Branch
+        if={proceed}
+        then={<Sequence>{concepts.map((c) => renderConcept(c))}</Sequence>}
+        else={
+          <Approval
+            id="preflight-block"
+            output={outputs.approval}
+            onDeny="continue"
+            request={{
+              title: `Missing API key for backend "${backend}"`,
+              summary: `${requiredKey ?? "(no key)"} is not set for backend "${backend}". Set it in .env, or re-run with backend=manual (no key needed). Approve to override and try anyway.`,
+              metadata: { backend },
+            }}
+          />
+        }
+      />
     </Workflow>
   );
 });

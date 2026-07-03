@@ -134,6 +134,20 @@ export function composedPrompt(runId: string): string | null {
   return row?.prompt ?? null;
 }
 
+/** The image-judge's best-of-n pick from its latest row (absolute or
+ *  project-relative path), or null. try/catch: DBs from before best-of-n have
+ *  no best_image column. */
+export function judgeBest(runId: string): string | null {
+  try {
+    const row = sdb
+      .query(`SELECT best_image FROM image_judge WHERE run_id = ? ORDER BY iteration DESC LIMIT 1`)
+      .get(runId) as { best_image: string | null } | null;
+    return row?.best_image || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Latest image-QC rejection (issues + suggestions), or null if the last verdict
  *  wasn't a reject — used to tell the user WHY a dropped image bounced. */
 export function lastImageReject(runId: string): { issues: string[]; suggestions: string } | null {
