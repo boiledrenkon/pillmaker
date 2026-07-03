@@ -51,6 +51,30 @@ async function latestCandidate(slug: string): Promise<AttachmentBuilder[]> {
   return files.length ? [new AttachmentBuilder(resolve(dir, files[files.length - 1]))] : [];
 }
 
+// Distill a full direction prompt into a thread-readable pitch: the hero scene
+// plus what actually differs between directions (subtitle/secondary tagline,
+// dose, pack look). The reviewer decides from this in Discord — no attachment
+// required (some clients hide file chips next to embeds).
+function directionPitch(p: string): string {
+  const sect = (name: string, cap: number) => {
+    const m = p.match(new RegExp(`${name}\\n([\\s\\S]*?)(?=\\n[A-Z][A-Z /]{3,}\\n|$)`));
+    const t = (m?.[1] ?? "").trim().replace(/\s+/g, " ");
+    return t.length > cap ? t.slice(0, cap - 1) + "…" : t;
+  };
+  const line = (label: string) => p.match(new RegExp(`^${label}: (.*)$`, "m"))?.[1]?.trim() ?? "";
+  const dose = sect("THE DOSE", 220) || sect("CAPSULE", 220);
+  return [
+    sect("MAIN ARTWORK", 600),
+    [
+      line("Subtitle") && `**Subtitle:** ${line("Subtitle")}`,
+      line("Secondary tagline") && `**Tagline 2:** ${line("Secondary tagline")}`,
+      line("Bottom slogan") && `**Slogan:** ${line("Bottom slogan")}`,
+    ].filter(Boolean).join("\n"),
+    dose && `**Dose:** ${dose}`,
+    sect("PACKAGING STYLE", 220) && `**Pack:** ${sect("PACKAGING STYLE", 220)}`,
+  ].filter(Boolean).join("\n");
+}
+
 // The run's effective final prompt: the human's ✏️ Edit / Use-B pick when one
 // exists (the workflow treats that file as authoritative), else the latest
 // composed primary.
@@ -829,6 +853,16 @@ async function tick() {
           : (sm.composedPrompt(r.runId) ?? "Prompt composed. Approve to generate, or Deny with a note to revise.");
         if (alts.length) {
           const warns = sm.alternateWarnings(r.runId);
+          // Post each direction as its own readable message ABOVE the card, so
+          // the reviewer decides entirely in the thread. The full prompts still
+          // ride along as a .txt for copy/archive purposes.
+          for (const [n, a] of alts.entries()) {
+            const L = "BCD"[n] ?? String(n + 2);
+            const w = warns.filter((x) => x.toUpperCase().startsWith(`${L}:`));
+            await thread.send(
+              `🔀 **Direction ${L}** — pick it with **Use ${L}** on the card below${w.length ? `\n⚠️ ${w.join(" · ")}` : ""}\n${directionPitch(a)}`.slice(0, 1990),
+            ).catch(() => {});
+          }
           const txt = [
             "=== PRIMARY (Approve) ===",
             sm.composedPrompt(r.runId) ?? "(none)",
@@ -837,7 +871,7 @@ async function tick() {
           ].join("\n");
           files.push(new AttachmentBuilder(Buffer.from(txt, "utf8"), { name: `${r.slug}-directions.txt` }));
           // Prepend (summary is tail-truncated at Discord's embed cap).
-          summary = `📎 ${alts.length} alternate direction(s) attached${warns.length ? ` (⚠️ ${warns.length} judge warning(s) — see attachment)` : ""} — **Use B/C** generates from that one instead. Primary below:\n\n${summary}`;
+          summary = `🔀 ${alts.length} alternate direction(s) posted above${warns.length ? ` (⚠️ ${warns.length} judge warning(s))` : ""} — **Use B/C** generates from that one instead. Primary below:\n\n${summary}`;
         }
         const card = qcMessage({
           runId: r.runId, nodeId: g.nodeId, iteration: g.iteration,
