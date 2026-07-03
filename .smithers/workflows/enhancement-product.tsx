@@ -24,12 +24,20 @@ import { conceptSchema, inputSchema, resolveMarkers } from "../shared/concept-sc
 // ---------------------------------------------------------------- outputs ---
 const qc = z.enum(["pass", "fail"]).default("fail");
 const preflightSchema = z.object({ backend: z.string(), ok: z.boolean().default(false), message: z.string().default("") });
-const composeSchema = z.object({ prompt: z.string().default("") });
+const composeSchema = z.object({
+  prompt: z.string().default(""),
+  // Alternate DIRECTIONS (complete standalone prompts) offered to the human at
+  // the prompt gate as Use B / Use C. Produced only on the FIRST compose.
+  alternates: z.array(z.string()).default([]),
+});
 const promptJudgeSchema = z.object({
   verdict: z.enum(["pass", "revise"]).default("revise"),
   completeness: qc, faithfulness: qc, constraints: qc, template: qc, grounding: qc,
   issues: z.array(z.string()).default([]),
   suggestions: z.string().default(""),
+  // Constraint screening of the alternates ("B: …" / "C: …"); never affects the
+  // verdict — alternates are human-choice options, not the judged prompt.
+  alternateWarnings: z.array(z.string()).default([]),
 });
 const generateSchema = z.object({
   slug: z.string().default(""),
@@ -189,6 +197,22 @@ export default smithers((ctx) => {
     const lastPromptJudge = read("promptJudge", `${slug}:prompt-judge`);
     const lastCompose = read("compose", `${slug}:compose`);
     const promptApproval = read("approval", `${slug}:approve-prompt`);
+
+    // ── Alternate directions (explore-then-exploit at the prompt gate) ──────
+    // PRODUCER: today, the first compose authors the alternates in the same
+    // call, one per stance below. To shift to max-diversity later (N parallel
+    // compose Tasks, one stance each), replace ONLY this block + the compose
+    // call — every consumer (judge screening, the bot's Use B/C buttons, the
+    // edited-prompt pick path) reads the compose output's `alternates[]` and
+    // never cares how it was produced.
+    const DIRECTION_STANCES = [
+      "UNEXPECTED ANGLE — a different hero-scene concept, dose format, or palette family than the obvious take on this theme",
+      "COPY-LED — the funniest tagline/copy angle you can find for this theme, with the artwork built around that joke",
+    ];
+    const exploreDirections = lastCompose
+      ? "This is a revision pass — return `alternates` as an empty list []."
+      : `In addition to your primary prompt, author ${DIRECTION_STANCES.length} ALTERNATE prompts and return them in \`alternates\` (in this order):\n` +
+        DIRECTION_STANCES.map((s, n) => `${n + 1}. ${s}`).join("\n");
     // First compose uses the higher-quality model; revisions use composeModel.
     const composeAgentsForConcept = [providers[(lastCompose ? input.composeModel : input.composeFirstModel) ?? "claude"]];
 
@@ -334,13 +358,21 @@ export default smithers((ctx) => {
         <Loop id={`${slug}:prompt-loop`} until={promptLoopDone} maxIterations={promptMaxIters} onMaxReached="return-last">
           <Sequence>
             <Task id={`${slug}:compose`} output={outputs.compose} agent={composeAgentsForConcept} timeoutMs={900_000} heartbeatTimeoutMs={300_000}>
-              <ComposePrompt spec={spec} banned={banned} verbatim={verbatimList} refImages={refList} feedback={composeFeedback} previous={composeFeedback ? (lastCompose?.prompt ?? "") : ""} />
+              <ComposePrompt spec={spec} banned={banned} verbatim={verbatimList} refImages={refList} exploreDirections={exploreDirections} feedback={composeFeedback} previous={composeFeedback ? (lastCompose?.prompt ?? "") : ""} />
             </Task>
             <Branch
               if={promptAutoOn}
               then={
                 <Task id={`${slug}:prompt-judge`} output={outputs.promptJudge} agent={judgeAgents} timeoutMs={900_000} heartbeatTimeoutMs={300_000}>
-                  <PromptJudge spec={spec} banned={banned} verbatim={verbatimList} refImages={refList} humanNote={promptHumanNote} prompt={lastCompose?.prompt ?? "(compose this iteration)"} />
+                  <PromptJudge
+                    spec={spec}
+                    banned={banned}
+                    verbatim={verbatimList}
+                    refImages={refList}
+                    humanNote={promptHumanNote}
+                    prompt={lastCompose?.prompt ?? "(compose this iteration)"}
+                    alternates={(lastCompose?.alternates ?? []).map((a: string, n: number) => `--- ALTERNATE ${"BC"[n] ?? n + 2} ---\n${a}`).join("\n\n") || "(none this iteration)"}
+                  />
                 </Task>
               }
             />

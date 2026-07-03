@@ -74,3 +74,15 @@ empty, there is no override — judge against the spec normally.
 ## Candidate prompt to judge
 
 {props.prompt}
+
+## Alternate directions (screen only — do NOT let these affect the verdict)
+
+These are optional directions a human may pick instead of the primary. They are
+NOT the judged prompt: never let their content change `verdict` or any
+criterion score. For each alternate, check ONLY the hard constraints — the
+banned list, the product NAME, and the VERBATIM lines — and report any
+violation in `alternateWarnings` as one string per problem, prefixed with the
+alternate's letter (e.g. "B: names a real brand 'X'"). Return an empty list if
+they are all clean or there are none.
+
+{props.alternates}

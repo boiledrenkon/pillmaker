@@ -16,7 +16,7 @@ import {
   type Message, type TextChannel, type ThreadChannel,
   type ChatInputCommandInteraction, type ModalSubmitInteraction, type ButtonInteraction,
 } from "discord.js";
-import { mkdir, writeFile, readdir } from "node:fs/promises";
+import { mkdir, writeFile, readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { config } from "./config";
@@ -49,6 +49,20 @@ async function latestCandidate(slug: string): Promise<AttachmentBuilder[]> {
   if (!existsSync(dir)) return [];
   const files = (await readdir(dir)).filter((f) => /\.(png|jpe?g|webp)$/i.test(f)).sort();
   return files.length ? [new AttachmentBuilder(resolve(dir, files[files.length - 1]))] : [];
+}
+
+// The run's effective final prompt: the human's ✏️ Edit / Use-B pick when one
+// exists (the workflow treats that file as authoritative), else the latest
+// composed primary.
+async function finalPromptFor(r: { runId: string; slug: string }): Promise<string | null> {
+  try {
+    const p = resolve(config.projectRoot, `outputs/${r.slug}/.edited-${r.runId}.txt`);
+    if (existsSync(p)) {
+      const t = (await readFile(p, "utf8")).trim();
+      if (t) return t;
+    }
+  } catch {}
+  return sm.composedPrompt(r.runId);
 }
 
 // Image for the image-QC card: the judge's best-of-n pick when available (that
@@ -612,6 +626,31 @@ async function onButton(i: ButtonInteraction) {
     return;
   }
 
+  // "Use B/C" on a prompt-QC card: pick an alternate direction. Same mechanics
+  // as ✏️ Edit — the alternate's exact text becomes the run's final prompt
+  // (written where the workflow reads it) and the gate approves. Works no
+  // matter how the alternates were produced (single compose today, parallel
+  // composes someday) — this only reads sm.composeAlternates().
+  if (i.customId.startsWith("qcuse:")) {
+    // qcuse:<idx>:<runId>:<iteration>:<gateSuffix>
+    const parts = i.customId.split(":");
+    const idx = Number(parts[1]) || 0, runId = parts[2], iteration = Number(parts[3]) || 0, nodeId = cid.node(runId, parts.slice(4).join(":"));
+    const r = store.runById(runId);
+    if (!r) return void i.reply({ ephemeral: true, content: "Unknown run." });
+    const chosen = sm.composeAlternates(runId)[idx];
+    if (!chosen) return void i.reply({ ephemeral: true, content: "That direction is no longer available (a recompose replaced it) — use Approve / Deny / Edit." });
+    await i.deferUpdate().catch(() => {}); // ack before the slow approve+resume
+    const dir = resolve(config.projectRoot, `outputs/${r.slug}`);
+    await mkdir(dir, { recursive: true });
+    await writeFile(resolve(dir, `.edited-${runId}.txt`), chosen, "utf8");
+    store.mark(`resolved:${r.runId}:${iteration}:${nodeId}`);
+    await sm.approve(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username);
+    await i.editReply({ components: [] }).catch(() => {});
+    store.takeMsgRef(`card:${r.runId}:${iteration}:${nodeId}`);
+    await i.followUp(`🔀 Direction **${"BCD"[idx] ?? idx + 2}** chosen by <@${i.user.id}> — generating from it (primary skipped).`);
+    return;
+  }
+
   if (i.customId.startsWith("qc:")) {
     // qc:<approve|deny>:<runId>:<iteration>:<gateSuffix>  — nodeId is rebuilt from
     // the runId's slug (back-compat: old cards carry the full nodeId, handled too).
@@ -766,7 +805,7 @@ async function tick() {
             .send(`❌ **Image QC rejected the last drop:**\n${why}${reject.suggestions ? `\n_Suggestion:_ ${reject.suggestions}` : ""}`.slice(0, 1900))
             .catch(() => {});
         }
-        const promptFull = sm.composedPrompt(r.runId) ?? "(use the prompt approved above)";
+        const promptFull = (await finalPromptFor(r)) ?? "(use the prompt approved above)";
         // Discord caps a message at 2000 chars; the composed prompt is usually
         // longer. Inline it in a code block when it fits, otherwise attach the
         // FULL prompt as a .txt (open + select-all = clean copy, never truncated).
@@ -782,12 +821,29 @@ async function tick() {
       } else {
         const isImg = g.kind === "image";
         const files = isImg ? await candidateAttachment(r.runId, r.slug) : [];
+        // Alternate directions (first compose only): offered as Use B / Use C,
+        // with the full text of every direction attached for side-by-side review.
+        const alts = isImg ? [] : sm.composeAlternates(r.runId);
+        let summary = isImg
+          ? "Review the generated image above and decide. Deny opens a note that feeds a regenerate."
+          : (sm.composedPrompt(r.runId) ?? "Prompt composed. Approve to generate, or Deny with a note to revise.");
+        if (alts.length) {
+          const warns = sm.alternateWarnings(r.runId);
+          const txt = [
+            "=== PRIMARY (Approve) ===",
+            sm.composedPrompt(r.runId) ?? "(none)",
+            ...alts.map((a, n) => `\n=== DIRECTION ${"BCD"[n] ?? n + 2} (Use ${"BCD"[n] ?? n + 2}) ===\n${a}`),
+            ...(warns.length ? [`\n⚠️ Judge constraint warnings on alternates:\n${warns.map((w) => `- ${w}`).join("\n")}`] : []),
+          ].join("\n");
+          files.push(new AttachmentBuilder(Buffer.from(txt, "utf8"), { name: `${r.slug}-directions.txt` }));
+          // Prepend (summary is tail-truncated at Discord's embed cap).
+          summary = `📎 ${alts.length} alternate direction(s) attached${warns.length ? ` (⚠️ ${warns.length} judge warning(s) — see attachment)` : ""} — **Use B/C** generates from that one instead. Primary below:\n\n${summary}`;
+        }
         const card = qcMessage({
           runId: r.runId, nodeId: g.nodeId, iteration: g.iteration,
           title: `${isImg ? "🖼️ Image" : "📝 Prompt"} QC — ${r.slug}`,
-          summary: isImg
-            ? "Review the generated image above and decide. Deny opens a note that feeds a regenerate."
-            : (sm.composedPrompt(r.runId) ?? "Prompt composed. Approve to generate, or Deny with a note to revise."),
+          summary,
+          alternates: alts.length,
         });
         const sent = await thread.send({ ...card, files }).catch(() => null);
         if (sent) { store.mark(postedKey); store.saveMsgRef(`card:${r.runId}:${g.iteration}:${g.nodeId}`, thread.id, sent.id); }
