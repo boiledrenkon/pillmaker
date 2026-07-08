@@ -33,11 +33,13 @@ Return ONLY a JSON object (no prose, no markdown fences) with exactly these keys
 {
   "name": "PRODUCT NAME as printed, ALL CAPS, on-theme and punny",
   "theme": "one rich sentence expanding the idea into a vivid parody world compose can build a hero scene from",
-  "mainTagline": "the big hero tagline, ALL CAPS",
-  "copyLines": ["3-4 supporting copy lines, each ALL CAPS, punny, themed"],
+  "mainTagline": "the big hero tagline, ALL CAPS, 7 words or fewer",
+  "copyLines": ["2-3 supporting copy lines, each ALL CAPS, punny, themed, 5 words or fewer"],
   "extraInstructions": "any art/brand-safety notes (e.g. avoid real trademarks); empty string if none"
 }
-If the idea already suggests a name, honor it. Do not wrap the JSON in code fences.`;
+On-pack copy must stay LEAN — image models garble dense text, so fewer, bigger
+words always wins. If the idea already suggests a name, honor it. Do not wrap
+the JSON in code fences.`;
 
 /** Pull the first balanced JSON object out of arbitrary model text. */
 function parseLooseJson(text: string): any | null {
