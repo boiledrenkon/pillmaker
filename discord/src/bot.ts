@@ -15,6 +15,7 @@ import {
   PermissionFlagsBits,
   type Message, type TextChannel, type ThreadChannel,
   type ChatInputCommandInteraction, type ModalSubmitInteraction, type ButtonInteraction,
+  type StringSelectMenuInteraction,
 } from "discord.js";
 import { mkdir, writeFile, readdir, readFile, copyFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
@@ -22,7 +23,7 @@ import { resolve } from "node:path";
 import { config } from "./config";
 import { store, type RunRow } from "./store";
 import * as sm from "./smithers";
-import { cid, qcMessage, denyNoteModal, editPromptModal, conceptModal, startRow, stopDiscardRow, intakeCard, reqModal, expandedCard, directionRow } from "./ui";
+import { cid, qcMessage, denyNoteModal, editPromptModal, conceptModal, startRow, stopDiscardRow, intakeCard, reqModal, expandedCard, directionComponents } from "./ui";
 import { validateConcept, lines, type Concept } from "../../.smithers/shared/concept-schema";
 import { expandConcept, pitchDirections, slugify, safeSlug } from "./expand";
 
@@ -216,10 +217,17 @@ async function offerDirections(concept: Concept, thread: ThreadChannel, requeste
   store.saveIntake(token, { concept, pitches, requesterId, threadId: thread.id });
   const body = pitches.map((p, n) => `**${n + 1}.** ${p}`).join("\n\n");
   await note.edit({
-    content: `🎨 **Pick a direction for the artwork** — or let compose decide:\n\n${body}`.slice(0, 1990),
-    components: [directionRow(token, pitches.length)],
+    content: `🎨 **Pick direction(s) for the artwork** — tick more than one for a run per direction, or let compose decide:\n\n${body}`.slice(0, 1990),
+    components: directionComponents(token, pitches),
   }).catch(() => {});
   return true;
+}
+
+// A sibling slug for extra direction picks (`<slug>_d2`, …). Trims the base so
+// the suffix survives the 40-char cap, and bumps to a time suffix on collision.
+function directionSlug(base: string, dirNum: number): string {
+  const s = safeSlug(`${base.slice(0, 35)}_d${dirNum}`);
+  return store.runBySlug(s) ? safeSlug(`${base.slice(0, 30)}_d${dirNum}_${Date.now().toString(36).slice(-4)}`) : s;
 }
 
 // Create the thread and either offer the direction pick or start right away.
@@ -718,9 +726,32 @@ async function onButton(i: ButtonInteraction) {
     return;
   }
 
+  // 🔄 Re-roll: author a fresh set of pitches for the same concept. takeIntake
+  // consumes atomically and the stash is re-saved under a NEW token, so a click
+  // on the stale card bounces on "already picked".
+  if (i.customId.startsWith("dirreroll:")) {
+    const token = i.customId.slice("dirreroll:".length);
+    const stash = store.takeIntake<{ concept: Concept; pitches: string[]; requesterId: string | null; threadId: string }>(token);
+    if (!stash) return void i.reply({ ephemeral: true, content: "Already picked (or expired)." }).catch(() => {});
+    await i.deferUpdate().catch(() => {});
+    await i.editReply({ components: [] }).catch(() => {}); // no picks while authoring
+    const rolled = await pitchDirections(stash.concept, config.directions);
+    const pitches = rolled.length >= 2 ? rolled : stash.pitches; // keep the old set if authoring fails
+    const newToken = `dir:${stash.concept.slug}:${Date.now().toString(36)}`;
+    store.saveIntake(newToken, { ...stash, pitches });
+    const body = pitches.map((p, n) => `**${n + 1}.** ${p}`).join("\n\n");
+    await i.editReply({
+      content: `${rolled.length >= 2 ? "🔄 **Re-rolled** — pick direction(s)" : "⚠️ Re-roll failed — keeping the previous set"} (or let compose decide):\n\n${body}`.slice(0, 1990),
+      components: directionComponents(newToken, pitches),
+    }).catch(() => {});
+    return;
+  }
+
   // Pre-run direction pick: [1..N] sets the pitch as the concept's artwork
   // direction, 🎲 skips — either way the run starts now. takeIntake consumes
   // the stash atomically, so double-clicks bounce on "already picked".
+  // (Numbered-button picks only arrive from pre-multiselect cards; 🎲 skip is
+  // shared with the current card.)
   if (i.customId.startsWith("dirpick:")) {
     // dirpick:<idx|skip>:<token>
     const [, sel, ...rest] = i.customId.split(":");
@@ -760,6 +791,38 @@ async function onButton(i: ButtonInteraction) {
     store.takeMsgRef(`card:${r.runId}:${iteration}:${nodeId}`); // drop the now-resolved card ref
     await i.followUp(`✅ Approved by <@${i.user.id}>.`);
   }
+}
+
+// ── select menus ─────────────────────────────────────────────────────────────
+// Direction multi-pick: ONE RUN PER TICKED PITCH. The first pick runs in this
+// thread under the concept's own slug; each extra pick gets a sibling slug
+// (<slug>_dN) and its own thread so outputs, gates, and final files never
+// collide. takeIntake is atomic, so a double fire bounces on "already picked".
+async function onSelect(i: StringSelectMenuInteraction) {
+  if (!i.customId.startsWith("dirsel:")) return;
+  const token = i.customId.slice("dirsel:".length);
+  const stash = store.takeIntake<{ concept: Concept; pitches: string[]; requesterId: string | null; threadId: string }>(token);
+  if (!stash) return void i.reply({ ephemeral: true, content: "Already picked (or expired)." }).catch(() => {});
+  await i.deferUpdate().catch(() => {});
+  await i.editReply({ components: [] }).catch(() => {}); // strip while launching
+  const picks = [...new Set(i.values.map(Number))].filter((n) => stash.pitches[n] != null).sort((a, b) => a - b);
+  const thread = i.channel?.isThread() ? (i.channel as ThreadChannel) : await getThread(stash.threadId);
+  if (!thread || !picks.length) return void i.followUp({ ephemeral: true, content: "Thread is gone — relaunch the concept." }).catch(() => {});
+  const first = { ...stash.concept, artwork: stash.pitches[picks[0]] };
+  const firstRun = await beginRun(first, thread, stash.requesterId);
+  const lines = [`🎨 Direction **${picks[0] + 1}** picked by <@${i.user.id}> — \`${firstRun}\` composing in this thread.`];
+  const qc = (await client.channels.fetch(config.channels.qc).catch(() => null)) as TextChannel | null;
+  for (const idx of picks.slice(1)) {
+    const clone = { ...stash.concept, slug: directionSlug(stash.concept.slug, idx + 1), artwork: stash.pitches[idx] };
+    const t = qc
+      ? await qc.threads.create({ name: clone.slug.slice(0, 90), autoArchiveDuration: 1440, type: ChannelType.PublicThread }).catch(() => null)
+      : null;
+    if (!t) { lines.push(`⚠️ Couldn't open a thread for direction ${idx + 1} — skipped.`); continue; }
+    await t.send(`🎨 **Direction ${idx + 1}** of **${stash.concept.name}**: ${stash.pitches[idx]}`.slice(0, 1900)).catch(() => {});
+    const runId = await beginRun(clone, t, stash.requesterId);
+    lines.push(`🎨 Direction **${idx + 1}** → \`${runId}\` in <#${t.id}>.`);
+  }
+  await i.followUp(lines.join("\n").slice(0, 1900)).catch(() => {});
 }
 
 // ── message drops (manual-gen handoff) ───────────────────────────────────────
@@ -992,6 +1055,7 @@ client.on(Events.InteractionCreate, async (i) => {
     if (i.isChatInputCommand()) await onCommand(i);
     else if (i.isModalSubmit()) await onModal(i);
     else if (i.isButton()) await onButton(i);
+    else if (i.isStringSelectMenu()) await onSelect(i);
   } catch (e) {
     console.error("interaction error", e);
     if (i.isRepliable()) i.reply({ ephemeral: true, content: `⚠️ ${String(e)}` }).catch(() => {});

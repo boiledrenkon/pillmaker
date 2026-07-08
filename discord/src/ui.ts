@@ -3,6 +3,7 @@
 import {
   ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle,
+  StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
 } from "discord.js";
 
 const cut = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
@@ -59,15 +60,26 @@ export function qcMessage(opts: {
   return { embeds: [embed], components: [row] };
 }
 
-// Pre-run direction pick: numbered buttons matching the short pitches posted
-// in the thread, plus a "let compose decide" skip. The run starts on click.
-export function directionRow(token: string, n: number): ActionRowBuilder<ButtonBuilder> {
-  const row = new ActionRowBuilder<ButtonBuilder>();
-  for (let i = 0; i < Math.min(n, 4); i++) {
-    row.addComponents(new ButtonBuilder().setCustomId(`dirpick:${i}:${token}`).setLabel(String(i + 1)).setStyle(ButtonStyle.Primary));
-  }
-  row.addComponents(new ButtonBuilder().setCustomId(`dirpick:skip:${token}`).setLabel("🎲 Compose decides").setStyle(ButtonStyle.Secondary));
-  return row;
+// Pre-run direction pick: a MULTI-select of the pitches (tick 1, 2 and/or 3 —
+// submits when the menu closes; one run launches per ticked direction), plus a
+// "let compose decide" skip and a re-roll for a fresh set of pitches.
+export function directionComponents(
+  token: string,
+  pitches: string[],
+): (ActionRowBuilder<StringSelectMenuBuilder> | ActionRowBuilder<ButtonBuilder>)[] {
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(`dirsel:${token}`)
+    .setPlaceholder("Pick direction(s) — one run per pick")
+    .setMinValues(1)
+    .setMaxValues(pitches.length)
+    .addOptions(pitches.map((p, i) =>
+      new StringSelectMenuOptionBuilder().setValue(String(i)).setLabel(`Direction ${i + 1}`).setDescription(cut(p, 100)),
+    ));
+  const buttons = new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder().setCustomId(`dirpick:skip:${token}`).setLabel("🎲 Compose decides").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId(`dirreroll:${token}`).setLabel("🔄 Re-roll directions").setStyle(ButtonStyle.Secondary),
+  );
+  return [new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu), buttons];
 }
 
 // Modal to edit the composed prompt directly. The submitted text becomes the
