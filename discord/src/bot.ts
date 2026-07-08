@@ -300,17 +300,24 @@ async function launchRequest(
   };
 }
 
-// Save every image attached in the thread as the concept's reference set.
+// Save every HUMAN-posted image in the thread as the concept's reference set.
+// Bot messages are skipped — in a run's thread the bot posts QC candidates and
+// final outputs, which must never be swept in as references (/rerun reuses this
+// on old threads, not just fresh ▶ Start ones).
 async function collectRefs(thread: ThreadChannel, slug: string): Promise<string[]> {
   const dir = `outputs/${slug}/ref_images`;
   const msgs = await thread.messages.fetch({ limit: 50 }).catch(() => null);
   let n = 0;
   if (msgs) {
     for (const m of msgs.values()) {
+      if (m.author.bot) continue;
       for (const a of m.attachments.values()) {
         if (isImage(a.contentType, a.name ?? "", a.size)) {
           const ext = (a.name?.match(IMG_EXT)?.[0] ?? ".png").toLowerCase();
-          await download(a.url, resolve(config.projectRoot, dir, `ref_${n++}${ext}`));
+          try {
+            await download(a.url, resolve(config.projectRoot, dir, `ref_${n}${ext}`));
+            n++;
+          } catch (e) { console.error("collectRefs skip", a.name, e); }
         }
       }
     }
@@ -443,9 +450,17 @@ async function onCommand(i: ChatInputCommandInteraction) {
     let concept: Concept | null = null;
     try { concept = JSON.parse(r.inputJson ?? "{}")?.concepts?.[0] ?? null; } catch {}
     if (!concept) return void i.editReply("Couldn't read that run's concept — nothing to re-run.");
+    // Fresh refs on demand: when /rerun is used inside a thread, sweep it for
+    // human-dropped images first — drop a new ref, then /rerun. Nothing dropped →
+    // keep the concept's existing ref dir (files on disk don't expire).
+    let refNote = "";
+    if (i.channel?.isThread()) {
+      const swept = await collectRefs(i.channel as ThreadChannel, concept.slug);
+      if (swept.length) { concept.refImages = swept; refNote = " · refs refreshed from this thread"; }
+    }
     const qc = (await client.channels.fetch(config.channels.qc)) as TextChannel;
     const runId = await launch(concept, qc, r.requesterId); // preserves requesterId → they get notified
-    return void i.editReply(`🔁 Re-ran \`${r.slug}\` → ${runId}${r.requesterId ? ` (still credited to <@${r.requesterId}>)` : ""}`);
+    return void i.editReply(`🔁 Re-ran \`${r.slug}\` → ${runId}${r.requesterId ? ` (still credited to <@${r.requesterId}>)` : ""}${refNote}`);
   }
 }
 
