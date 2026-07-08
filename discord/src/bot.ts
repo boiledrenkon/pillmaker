@@ -16,7 +16,7 @@ import {
   type Message, type TextChannel, type ThreadChannel,
   type ChatInputCommandInteraction, type ModalSubmitInteraction, type ButtonInteraction,
 } from "discord.js";
-import { mkdir, writeFile, readdir, readFile } from "node:fs/promises";
+import { mkdir, writeFile, readdir, readFile, copyFile, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { config } from "./config";
@@ -36,8 +36,17 @@ const client = new Client({
 });
 
 // ── helpers ──────────────────────────────────────────────────────────────────
+// Download an IMAGE. Throws instead of writing junk: Discord CDN links expire,
+// and an expired one returns 200/404 with a text body ("This content is no
+// longer available.") that, saved as ref_0.png, poisons every generation
+// attempt with an OpenAI `invalid_image_file` 400.
 async function download(url: string, dest: string): Promise<string> {
-  const buf = Buffer.from(await (await fetch(url)).arrayBuffer());
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching attachment (expired link?)`);
+  const ct = res.headers.get("content-type");
+  const buf = Buffer.from(await res.arrayBuffer());
+  if ((ct && !ct.startsWith("image/")) || buf.length < 1000)
+    throw new Error(`attachment is not an image (${ct ?? "unknown type"}, ${buf.length} bytes — expired link?)`);
   await mkdir(resolve(dest, ".."), { recursive: true });
   await writeFile(dest, buf);
   return dest;
@@ -236,6 +245,7 @@ type ReqStash = {
   suggestedName: string | null;
   gender: Concept["gender"];
   refUrls: string[];
+  refPaths?: string[]; // local copies saved at intake time (URLs expire; these don't)
   expanded?: { name: string; theme: string; mainTagline: string; copyLines: string[]; extraInstructions: string };
 };
 
@@ -247,11 +257,25 @@ async function launchRequest(
   stash: ReqStash,
   fields: { name: string; theme: string; mainTagline: string; copyLines: string[]; extraInstructions: string },
   byId: string,
-): Promise<{ ok: true; runId: string } | { ok: false; errors: string[] }> {
+): Promise<{ ok: true; runId: string; warning?: string } | { ok: false; errors: string[] }> {
   const slug = uniqueSlug(fields.name);
   const refDir = `outputs/${slug}/ref_images`;
+  // Prefer the files saved at intake time (CDN URLs expire); re-download only for
+  // stashes from before refPaths existed. Count only successes so refImages never
+  // claims files that aren't actually on disk.
   let n = 0;
-  for (const url of stash.refUrls) await download(url, resolve(config.projectRoot, refDir, `ref_${n++}.png`)).catch(() => {});
+  const refFails: string[] = [];
+  const fromDisk = !!stash.refPaths?.length;
+  for (const src of fromDisk ? stash.refPaths! : stash.refUrls) {
+    const dest = resolve(config.projectRoot, refDir, `ref_${n}.png`);
+    try {
+      if (fromDisk) {
+        await mkdir(resolve(dest, ".."), { recursive: true });
+        await copyFile(src, dest);
+      } else await download(src, dest);
+      n++;
+    } catch (e) { refFails.push(e instanceof Error ? e.message : String(e)); }
+  }
   const concept = {
     slug, gender: stash.gender,
     name: fields.name,
@@ -269,7 +293,11 @@ async function launchRequest(
   await clearCardButtons(`reqcard:${token}`);
   const u = await client.users.fetch(stash.requesterId).catch(() => null);
   await u?.send(`✅ Your request "${concept.name}" was approved and is being created — I'll send a gallery link when it's ready.`).catch(() => {});
-  return { ok: true, runId };
+  if (fromDisk) await rm(resolve(stash.refPaths![0], ".."), { recursive: true, force: true }).catch(() => {});
+  return {
+    ok: true, runId,
+    warning: refFails.length ? `⚠️ ${refFails.length} reference image(s) skipped (${refFails[0]}) — launched without them.` : undefined,
+  };
 }
 
 // Save every image attached in the thread as the concept's reference set.
@@ -302,16 +330,24 @@ async function onCommand(i: ChatInputCommandInteraction) {
     const idea = i.options.getString("idea", true);
     const suggestedName = i.options.getString("name");
     const gender = i.options.getString("gender") ?? "male";
-    const refUrls = ["image1", "image2", "image3"]
+    const refAtts = ["image1", "image2", "image3"]
       .map((k) => i.options.getAttachment(k))
-      .filter((a): a is NonNullable<typeof a> => !!a && isImage(a.contentType, a.name ?? "", a.size))
-      .map((a) => a.url);
+      .filter((a): a is NonNullable<typeof a> => !!a && isImage(a.contentType, a.name ?? "", a.size));
     const token = `req:${i.user.id}:${Date.now().toString(36)}`;
-    store.saveIntake(token, { requesterId: i.user.id, idea, suggestedName, gender, refUrls });
+    // Save the refs NOW, while the CDN links are fresh. They're signed and expire,
+    // and approval can come days later — an expired link once poisoned an entire
+    // run ("This content is no longer available." saved as ref_0.png → OpenAI 400
+    // on all 9 attempts). launchRequest copies these files instead of re-fetching.
+    const refPaths: string[] = [];
+    for (const a of refAtts) {
+      const dest = resolve(config.projectRoot, `outputs/.intake/${token.replace(/[^a-zA-Z0-9_-]/g, "_")}/ref_${refPaths.length}.png`);
+      try { refPaths.push(await download(a.url, dest)); } catch (e) { console.error("intake ref download failed", e); }
+    }
+    store.saveIntake(token, { requesterId: i.user.id, idea, suggestedName, gender, refUrls: refAtts.map((a) => a.url), refPaths });
     const intake = (await client.channels.fetch(config.channels.intake)) as TextChannel;
     await intake.send(intakeCard({
       token, requesterId: i.user.id, requesterTag: i.user.username,
-      idea, suggestedName, gender, refCount: refUrls.length,
+      idea, suggestedName, gender, refCount: refPaths.length,
     }));
     // Persistent, neutral public ack (no idea text) so the channel shows life
     // and the requester can see their request move through review.
@@ -544,7 +580,7 @@ async function onModal(i: ModalSubmitInteraction) {
       store.saveIntake(token, stash); // keep it re-approvable so the card still works
       return void i.editReply(`❌ Brief invalid:\n• ${res.errors.join("\n• ")}\nThe request is still in the queue — Edit and submit again.`);
     }
-    await i.editReply(`🚀 Approved & launched for <@${stash.requesterId}>: ${res.runId}`);
+    await i.editReply(`🚀 Approved & launched for <@${stash.requesterId}>: ${res.runId}${res.warning ? `\n${res.warning}` : ""}`);
   }
 }
 
@@ -610,7 +646,7 @@ async function onButton(i: ButtonInteraction) {
       store.saveIntake(token, peek); // keep it re-approvable
       return void i.editReply(`❌ Couldn't launch:\n• ${res.errors.join("\n• ")}\nTry ✏️ Review & edit to fix it.`);
     }
-    await i.editReply(`🚀 Launched \`${res.runId}\` as-is.`);
+    await i.editReply(`🚀 Launched \`${res.runId}\` as-is.${res.warning ? `\n${res.warning}` : ""}`);
     return;
   }
 
@@ -746,6 +782,21 @@ function firstIssue(issuesJson: string | null): string {
   return issuesJson.slice(0, 160);
 }
 
+// WHY a run ended not-accepted, from the most informative durable signal: a
+// failed final generation attempt (its note holds the real error, e.g. an
+// OpenAI 400), else the last image-QC rejection. Null when there's no story.
+function failureReason(runId: string): string | null {
+  const gens = sm.generateRows(runId);
+  const last = gens[gens.length - 1];
+  if (last && !last.ok && last.note) {
+    const failed = gens.filter((g) => !g.ok).length;
+    return `${failed}/${gens.length} generation attempts failed — last error: ${last.note}`.slice(0, 500);
+  }
+  const rej = sm.lastImageReject(runId);
+  if (rej) return `image QC rejected the last attempt: ${rej.issues[0] ?? "(no detail)"}`.slice(0, 500);
+  return null;
+}
+
 // One-line human stage label for a run (used by /status + stall warnings).
 function stageLabel(runId: string): string {
   const gates = sm.openGates(runId);
@@ -766,8 +817,12 @@ function stageLabel(runId: string): string {
 // thread once, so the thread is a live activity log between human gates.
 async function postProgress(r: RunRow, thread: ThreadChannel) {
   for (const g of sm.generateRows(r.runId)) {
-    if (g.ok && store.firstSeen(`prog:gen:${r.runId}:${g.iteration}`))
-      await thread.send(`🎨 Generated image **attempt ${g.iteration + 1}**.`).catch(() => {});
+    if (!store.firstSeen(`prog:gen:${r.runId}:${g.iteration}`)) continue;
+    if (g.ok) await thread.send(`🎨 Generated image **attempt ${g.iteration + 1}**.`).catch(() => {});
+    else
+      await thread
+        .send(`⚠️ **Attempt ${g.iteration + 1} failed to generate:** ${g.note || "(no detail)"}`.slice(0, 1900))
+        .catch(() => {});
   }
   for (const j of sm.imageJudgeRows(r.runId)) {
     if (!store.firstSeen(`prog:ijudge:${r.runId}:${j.iteration}`)) continue;
@@ -887,8 +942,18 @@ async function tick() {
         // Public/requester-facing copy uses the product NAME (prettier than the
         // slug); status lines keep the slug since they're the admin's index.
         const name = displayName(r);
-        await thread.send(accepted ? "✅ **Accepted** — filed to outputs/." : `🏁 Finished (${state}) — not accepted.`);
-        await postStatus(accepted ? `✅ \`${r.slug}\` accepted` : `🏁 \`${r.slug}\` finished (${state}, not accepted)`);
+        const reason = accepted ? null : failureReason(r.runId);
+        await thread.send(
+          accepted
+            ? "✅ **Accepted** — filed to outputs/."
+            : `🏁 Finished (${state}) — not accepted.${reason ? `\n**Why:** ${reason}` : ""}`.slice(0, 1900),
+        );
+        await postStatus(
+          (accepted
+            ? `✅ \`${r.slug}\` accepted`
+            : `🏁 \`${r.slug}\` finished (${state}, not accepted)${reason ? ` — ${reason}` : ""}`
+          ).slice(0, 1900),
+        );
         // The image itself only ever lives in the public #outputs gallery.
         // Requesters get a DM with a LINK to the gallery post (never the image).
         const requester = r.requesterId ? await client.users.fetch(r.requesterId).catch(() => null) : null;

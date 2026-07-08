@@ -169,9 +169,9 @@ export function lastActivityMs(runId: string): number {
   return Math.max(ev?.m ?? 0, hb?.h ?? 0);
 }
 
-export type GenRow = { iteration: number; ok: number; image_path: string | null };
+export type GenRow = { iteration: number; ok: number; image_path: string | null; note: string | null };
 export function generateRows(runId: string): GenRow[] {
-  return sdb.query(`SELECT iteration, ok, image_path FROM generate WHERE run_id=? ORDER BY iteration`).all(runId) as GenRow[];
+  return sdb.query(`SELECT iteration, ok, image_path, note FROM generate WHERE run_id=? ORDER BY iteration`).all(runId) as GenRow[];
 }
 export type JudgeRow = { iteration: number; verdict: string; issues: string | null };
 export function imageJudgeRows(runId: string): JudgeRow[] {
