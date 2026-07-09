@@ -552,12 +552,12 @@ async function onModal(i: ModalSubmitInteraction) {
     if (r) store.mark(dkey);
     // Ack within Discord's 3s window BEFORE the slow smithers deny+resume (a
     // `bunx` cold-start can exceed 3s on a small VPS → "interaction failed").
-    await i.deferReply().catch(() => {});
+    const acked = await ackReply(i);
     if (r) {
       await clearCardButtons(`card:${runId}:${iteration}:${nodeId}`);
       await sm.deny(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username, note);
     }
-    await i.editReply(`❌ Denied by <@${i.user.id}> — _${note}_`);
+    await confirmModal(i, acked, `❌ Denied by <@${i.user.id}> — _${note}_`);
     return;
   }
 
@@ -574,13 +574,13 @@ async function onModal(i: ModalSubmitInteraction) {
     const ekey = `resolved:${r.runId}:${iteration}:${nodeId}`;
     if (store.hasSeen(ekey)) return void i.reply({ ephemeral: true, content: "Already decided — this gate was resolved while the editor was open." }).catch(() => {});
     store.mark(ekey);
-    await i.deferReply().catch(() => {}); // ack before the slow approve+resume
+    const acked = await ackReply(i); // ack before the slow approve+resume
     await clearCardButtons(`card:${runId}:${iteration}:${nodeId}`);
     const dir = resolve(config.projectRoot, `outputs/${r.slug}`);
     await mkdir(dir, { recursive: true });
     await writeFile(resolve(dir, `.edited-${runId}.txt`), edited, "utf8");
     await sm.approve(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username);
-    await i.editReply(`✏️ Prompt edited by <@${i.user.id}> — generating from your exact version (auto-QC skipped).`);
+    await confirmModal(i, acked, `✏️ Prompt edited by <@${i.user.id}> — generating from your exact version (auto-QC skipped).`);
     return;
   }
 
@@ -632,6 +632,30 @@ async function announce(i: ComponentInteraction, acked: boolean, content: string
   if (acked) { try { await i.followUp(content); return; } catch {} }
   const ch = i.channel;
   if (ch && "send" in ch) await (ch as any).send(content).catch(() => {});
+}
+
+/** Modal-submit twin of ackUpdate: deferReply, reporting whether it landed. */
+async function ackReply(i: ModalSubmitInteraction): Promise<boolean> {
+  try { await i.deferReply(); return true; }
+  catch (e) { console.warn(`deferReply missed the ack window for ${i.customId}: ${String(e)}`); return false; }
+}
+
+/** Confirm a modal decision: editReply when acked, else a plain channel message. */
+async function confirmModal(i: ModalSubmitInteraction, acked: boolean, content: string) {
+  if (acked) { try { await i.editReply(content); return; } catch {} }
+  const ch = i.channel;
+  if (ch && "send" in ch) await (ch as any).send(content).catch(() => {});
+}
+
+/** showModal needs a LIVE interaction — on a dead one (missed ack window) the
+ *  modal never opens and the clicker only sees "This interaction failed". Post
+ *  a re-click hint in the channel so the gate doesn't read as stale/broken. */
+async function showModalOrHint(i: ButtonInteraction, modal: Parameters<ButtonInteraction["showModal"]>[0], hint: string) {
+  try { await i.showModal(modal); }
+  catch {
+    const ch = i.channel;
+    if (ch && "send" in ch) await (ch as any).send(hint).catch(() => {});
+  }
 }
 
 // ── buttons ──────────────────────────────────────────────────────────────────
@@ -749,7 +773,7 @@ async function onButton(i: ButtonInteraction) {
     if (prompt.length > 4000) {
       return void i.reply({ ephemeral: true, content: `⚠️ This prompt is ${prompt.length} chars — over Discord's 4000-char edit field. Use **Deny + note** for now (or ping me to add multi-field editing).` });
     }
-    await i.showModal(editPromptModal(runId, nodeId, iteration, prompt));
+    await showModalOrHint(i, editPromptModal(runId, nodeId, iteration, prompt), "⚠️ Discord dropped that click before the editor could open — press ✏️ Edit again.");
     return;
   }
 
@@ -805,7 +829,7 @@ async function onButton(i: ButtonInteraction) {
     const realKind = parts[1], runId = parts[2], iteration = Number(parts[3]) || 0, nodeId = cid.node(runId, parts.slice(4).join(":"));
     const r = store.runById(runId);
     if (!r) return void i.reply({ ephemeral: true, content: "Unknown run." });
-    if (realKind === "deny") return void i.showModal(denyNoteModal(runId, nodeId, iteration));
+    if (realKind === "deny") return void showModalOrHint(i, denyNoteModal(runId, nodeId, iteration), "⚠️ Discord dropped that click before the note box could open — press 🚫 Deny again.");
     // Idempotence guard BEFORE any await (double-click protection), then ack
     // within Discord's 3s window and strip the buttons BEFORE the slow
     // smithers approve+resume (a `bunx` cold-start can exceed 3s).
