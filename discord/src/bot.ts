@@ -607,6 +607,33 @@ async function onModal(i: ModalSubmitInteraction) {
   }
 }
 
+// ── component-interaction ack hardening ──────────────────────────────────────
+// deferUpdate can miss Discord's 3s ack window (event-loop stall, container
+// cold start). Once it has, EVERY later editReply/followUp on that interaction
+// throws InteractionNotReplied — the decision itself still goes through, but
+// the card keeps its buttons and the clicker sees "This interaction failed".
+// So: track whether the ack landed, and fall back to editing the card message
+// / posting to the channel directly (bot REST, no interaction token needed).
+type ComponentInteraction = ButtonInteraction | StringSelectMenuInteraction;
+
+async function ackUpdate(i: ComponentInteraction): Promise<boolean> {
+  try { await i.deferUpdate(); return true; }
+  catch (e) { console.warn(`deferUpdate missed the ack window for ${i.customId}: ${String(e)}`); return false; }
+}
+
+/** Edit the clicked card (strip buttons / swap content) even if the ack failed. */
+async function editCard(i: ComponentInteraction, acked: boolean, payload: { content?: string; components?: any[] }) {
+  if (acked) await i.editReply(payload).catch(() => {});
+  else await i.message.edit(payload).catch(() => {});
+}
+
+/** Announce a decision's outcome; falls back to a plain channel message. */
+async function announce(i: ComponentInteraction, acked: boolean, content: string) {
+  if (acked) { try { await i.followUp(content); return; } catch {} }
+  const ch = i.channel;
+  if (ch && "send" in ch) await (ch as any).send(content).catch(() => {});
+}
+
 // ── buttons ──────────────────────────────────────────────────────────────────
 async function onButton(i: ButtonInteraction) {
   // Intake approve/reject (admin-only).
@@ -733,17 +760,17 @@ async function onButton(i: ButtonInteraction) {
     const token = i.customId.slice("dirreroll:".length);
     const stash = store.takeIntake<{ concept: Concept; pitches: string[]; requesterId: string | null; threadId: string }>(token);
     if (!stash) return void i.reply({ ephemeral: true, content: "Already picked (or expired)." }).catch(() => {});
-    await i.deferUpdate().catch(() => {});
-    await i.editReply({ components: [] }).catch(() => {}); // no picks while authoring
+    const acked = await ackUpdate(i);
+    await editCard(i, acked, { components: [] }); // no picks while authoring
     const rolled = await pitchDirections(stash.concept, config.directions);
     const pitches = rolled.length >= 2 ? rolled : stash.pitches; // keep the old set if authoring fails
     const newToken = `dir:${stash.concept.slug}:${Date.now().toString(36)}`;
     store.saveIntake(newToken, { ...stash, pitches });
     const body = pitches.map((p, n) => `**${n + 1}.** ${p}`).join("\n\n");
-    await i.editReply({
+    await editCard(i, acked, {
       content: `${rolled.length >= 2 ? "🔄 **Re-rolled** — pick direction(s)" : "⚠️ Re-roll failed — keeping the previous set"} (or let compose decide):\n\n${body}`.slice(0, 1990),
       components: directionComponents(newToken, pitches),
-    }).catch(() => {});
+    });
     return;
   }
 
@@ -758,14 +785,14 @@ async function onButton(i: ButtonInteraction) {
     const token = rest.join(":");
     const stash = store.takeIntake<{ concept: Concept; pitches: string[]; requesterId: string | null; threadId: string }>(token);
     if (!stash) return void i.reply({ ephemeral: true, content: "Already picked (or expired)." }).catch(() => {});
-    await i.deferUpdate().catch(() => {});
-    await i.editReply({ components: [] }).catch(() => {}); // strip pick buttons immediately
+    const acked = await ackUpdate(i);
+    await editCard(i, acked, { components: [] }); // strip pick buttons immediately
     const idx = sel === "skip" ? -1 : Number(sel);
     if (idx >= 0 && stash.pitches[idx]) stash.concept.artwork = stash.pitches[idx];
     const thread = i.channel?.isThread() ? (i.channel as ThreadChannel) : await getThread(stash.threadId);
-    if (!thread) return void i.followUp({ ephemeral: true, content: "Thread is gone — relaunch the concept." }).catch(() => {});
+    if (!thread) return void announce(i, acked, "⚠️ Thread is gone — relaunch the concept.");
     const runId = await beginRun(stash.concept, thread, stash.requesterId);
-    await i.followUp(idx >= 0
+    await announce(i, acked, idx >= 0
       ? `🎨 Direction **${idx + 1}** chosen by <@${i.user.id}> — \`${runId}\` is composing from it.`
       : `🎲 Compose's call — \`${runId}\` running.`);
     return;
@@ -785,11 +812,11 @@ async function onButton(i: ButtonInteraction) {
     const akey = `resolved:${r.runId}:${iteration}:${nodeId}`;
     if (store.hasSeen(akey)) return void i.reply({ ephemeral: true, content: "Already decided — this gate is resolved." }).catch(() => {});
     store.mark(akey);
-    await i.deferUpdate().catch(() => {});
-    await i.editReply({ components: [] }).catch(() => {});
+    const acked = await ackUpdate(i);
+    await editCard(i, acked, { components: [] });
     await sm.approve(r.runId, nodeId, iteration, r.inputJson ?? "", i.user.username);
     store.takeMsgRef(`card:${r.runId}:${iteration}:${nodeId}`); // drop the now-resolved card ref
-    await i.followUp(`✅ Approved by <@${i.user.id}>.`);
+    await announce(i, acked, `✅ Approved by <@${i.user.id}>.`);
   }
 }
 
@@ -803,11 +830,11 @@ async function onSelect(i: StringSelectMenuInteraction) {
   const token = i.customId.slice("dirsel:".length);
   const stash = store.takeIntake<{ concept: Concept; pitches: string[]; requesterId: string | null; threadId: string }>(token);
   if (!stash) return void i.reply({ ephemeral: true, content: "Already picked (or expired)." }).catch(() => {});
-  await i.deferUpdate().catch(() => {});
-  await i.editReply({ components: [] }).catch(() => {}); // strip while launching
+  const acked = await ackUpdate(i);
+  await editCard(i, acked, { components: [] }); // strip while launching
   const picks = [...new Set(i.values.map(Number))].filter((n) => stash.pitches[n] != null).sort((a, b) => a - b);
   const thread = i.channel?.isThread() ? (i.channel as ThreadChannel) : await getThread(stash.threadId);
-  if (!thread || !picks.length) return void i.followUp({ ephemeral: true, content: "Thread is gone — relaunch the concept." }).catch(() => {});
+  if (!thread || !picks.length) return void announce(i, acked, "⚠️ Thread is gone — relaunch the concept.");
   const first = { ...stash.concept, artwork: stash.pitches[picks[0]] };
   const firstRun = await beginRun(first, thread, stash.requesterId);
   const lines = [`🎨 Direction **${picks[0] + 1}** picked by <@${i.user.id}> — \`${firstRun}\` composing in this thread.`];
@@ -822,7 +849,7 @@ async function onSelect(i: StringSelectMenuInteraction) {
     const runId = await beginRun(clone, t, stash.requesterId);
     lines.push(`🎨 Direction **${idx + 1}** → \`${runId}\` in <#${t.id}>.`);
   }
-  await i.followUp(lines.join("\n").slice(0, 1900)).catch(() => {});
+  await announce(i, acked, lines.join("\n").slice(0, 1900));
 }
 
 // ── message drops (manual-gen handoff) ───────────────────────────────────────
