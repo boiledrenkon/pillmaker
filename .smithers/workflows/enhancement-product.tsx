@@ -143,6 +143,15 @@ export default smithers((ctx) => {
     bannedBase = ["real brand logos", "copyrighted characters", "explicit anatomy", "medical claims"];
   }
 
+  // Line-wide sensibility (file) — the distilled style lens (config/influences/
+  // → tools/distill_style.ts). ADVISORY: tilts compose's art direction; the
+  // judges are told it is never a requirement. Missing/empty file = none.
+  let stylePhilosophy = "";
+  try {
+    stylePhilosophy = readFileSync(input.stylePhilosophyPath ?? "config/style_philosophy.md", "utf8").trim();
+  } catch {}
+  const philosophy = stylePhilosophy || "(none — art-direct purely from the theme)";
+
   const read = (table: string, nodeId: string) => ctx.outputMaybe(table, { nodeId });
 
   if (concepts.length === 0) {
@@ -334,13 +343,13 @@ export default smithers((ctx) => {
         <Loop id={`${slug}:prompt-loop`} until={promptLoopDone} maxIterations={promptMaxIters} onMaxReached="return-last">
           <Sequence>
             <Task id={`${slug}:compose`} output={outputs.compose} agent={composeAgentsForConcept} timeoutMs={900_000} heartbeatTimeoutMs={300_000}>
-              <ComposePrompt spec={spec} banned={banned} verbatim={verbatimList} refImages={refList} feedback={composeFeedback} previous={composeFeedback ? (lastCompose?.prompt ?? "") : ""} />
+              <ComposePrompt spec={spec} banned={banned} verbatim={verbatimList} refImages={refList} philosophy={philosophy} feedback={composeFeedback} previous={composeFeedback ? (lastCompose?.prompt ?? "") : ""} />
             </Task>
             <Branch
               if={promptAutoOn}
               then={
                 <Task id={`${slug}:prompt-judge`} output={outputs.promptJudge} agent={judgeAgents} timeoutMs={900_000} heartbeatTimeoutMs={300_000}>
-                  <PromptJudge spec={spec} banned={banned} verbatim={verbatimList} refImages={refList} humanNote={promptHumanNote} prompt={lastCompose?.prompt ?? "(compose this iteration)"} />
+                  <PromptJudge spec={spec} banned={banned} verbatim={verbatimList} refImages={refList} philosophy={philosophy} humanNote={promptHumanNote} prompt={lastCompose?.prompt ?? "(compose this iteration)"} />
                 </Task>
               }
             />
@@ -399,6 +408,7 @@ export default smithers((ctx) => {
                           spec={spec}
                           banned={banned}
                           refImages={refList}
+                          philosophy={philosophy}
                         />
                       </Task>
                     }

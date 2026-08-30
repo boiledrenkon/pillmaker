@@ -28,6 +28,8 @@ Score each criterion as `pass` or `fail`, then set the overall `verdict`:
    the now-superseded spec wording. Conversely, a prompt that IGNORES or
    CONTRADICTS the human's direction MUST fail faithfulness — obeying the note
    is mandatory, not optional. Quote the disobeyed instruction in `issues`.
+   (The Sensibility section below is ADVISORY taste guidance — never a
+   faithfulness requirement.)
 3. **constraints** — Does the prompt include a NEGATIVE CONSTRAINTS block covering
    the banned list (+ per-concept extras), and does the prompt itself avoid
    describing anything banned (real logos, explicit anatomy, medical claims)?
@@ -59,6 +61,17 @@ product NAME (completeness), and the banned list (constraints). If the section i
 empty, there is no override — judge against the spec normally.
 
 {props.humanNote}
+
+## Sensibility (ADVISORY — directional taste, never a requirement)
+
+{props.philosophy}
+
+Loose directional guidance for the line's art direction, NOT a checklist:
+never mark `revise`, and never fail faithfulness or grounding, because the
+prompt interprets it loosely, emphasizes some aspects, or omits others. At
+most, note an active contradiction of its overall temperament as a
+non-failing issue. Never expect it in NEGATIVE CONSTRAINTS (constraints are
+judged against the banned list only).
 
 ## VERBATIM list — ONLY these must appear exactly (everything else is a weighted seed)
 

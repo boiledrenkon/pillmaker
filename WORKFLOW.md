@@ -19,6 +19,9 @@ Files:
 - `.smithers/workflows/enhancement-product.tsx` — the graph
 - `.smithers/prompts/product-*.mdx` — compose / judge / generate / finalize prompts
 - `config/banned_terms.json` — **editable** banned-items list (add/remove freely)
+- `config/lenses/<name>.md` — distilled sensibility lenses (advisory style tilt);
+  build from `config/influences/<name>/` with `bun tools/distill_style.ts <name>`;
+  the bot selects one via `STYLE_LENS`, CLI runs via `stylePhilosophyPath`
 - `tools/preflight.py` — backend API-key check
 - `tools/gen_image.py` — API backend dispatcher (openai | gemini | replicate)
 - `tools/clip_score.py` — soft CLIP style score, reuses `scraper/filter.py`
@@ -70,6 +73,7 @@ Top level:
 | `maxAttempts` | `3` | regen/revise cap per QC loop before the human gate |
 | `clipWeight` | `0.2` | how much the CLIP style score counts (soft) |
 | `bannedTermsPath` | `config/banned_terms.json` | editable banned list |
+| `stylePhilosophyPath` | `config/style_philosophy.md` | distilled sensibility lens to apply, e.g. `config/lenses/shadows.md` (advisory; missing file = none) |
 | `outDir` | `outputs` | where finished concepts land |
 
 Each concept: `slug`, `name`, `gender` (`male`/`female`/`couples`), `theme`,

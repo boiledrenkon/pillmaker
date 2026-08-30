@@ -162,6 +162,7 @@ function runInput(concept: Concept) {
     composeFirstModel: config.composeFirstModel,
     judgeModel: config.judgeModel,
     toolModel: config.toolModel,
+    ...(config.styleLens ? { stylePhilosophyPath: `config/lenses/${config.styleLens}.md` } : {}),
   };
 }
 

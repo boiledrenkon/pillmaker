@@ -35,7 +35,9 @@ Score each criterion `pass` / `fail`:
    the references is fine and expected; do NOT fail for not matching their
    exact look. Fail only if it reads off-genre: a clean pharmacy/medical box,
    a poster/illustration instead of a product pack, or no recognizable retail
-   pack format at all.
+   pack format at all. The Sensibility section below (if any) is directional
+   taste guidance — loose or partial expression of it is fine and expected;
+   never fail this or any criterion for interpreting it freely.
 
 ## Verdict rule
 
@@ -58,6 +60,15 @@ must say what to change (prompt tweak or regenerate) so the next attempt improve
 ## Input spec (JSON)
 
 {props.spec}
+
+## Sensibility (ADVISORY — never a requirement)
+
+{props.philosophy}
+
+Loose taste guidance for the line, NOT a checklist: never reject, and never
+fail any criterion, because the image expresses it loosely, partially, or not
+at all. At most, note an active clash with its temperament in `issues` as a
+non-failing observation.
 
 ## Banned list (hard constraints)
 

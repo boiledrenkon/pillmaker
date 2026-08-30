@@ -55,6 +55,7 @@ export const inputSchema = z.object({
   maxMachineRetries: z.number().int().min(0).default(3).describe("auto-judge recompose/regenerate attempts before giving up"),
   maxHumanRetries: z.number().int().min(0).default(3).describe("human-deny recompose/regenerate attempts before giving up"),
   bannedTermsPath: z.string().default("config/banned_terms.json"),
+  stylePhilosophyPath: z.string().default("config/style_philosophy.md").describe("distilled aesthetic sensibility to apply, e.g. config/lenses/shadows.md (built from config/influences/<lens>/ via tools/distill_style.ts); tilts art direction, never a checklist; missing file = none"),
   outDir: z.string().default("outputs"),
 });
 

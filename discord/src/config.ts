@@ -68,6 +68,11 @@ export const config = {
   judgeModel: opt("JUDGE_MODEL", "claudeSonnet"),
   // Mechanical tool tasks (run the generator command, finalize files): cheap+fast.
   toolModel: opt("TOOL_MODEL", "claudeSonnet"),
+  // Style lens: name of a distilled sensibility under config/lenses/<name>.md
+  // (built from config/influences/<name>/ via `bun tools/distill_style.ts
+  // <name>`). Advisory art-direction tilt applied to every run this worker
+  // starts. Blank = none.
+  styleLens: opt("STYLE_LENS", "").replace(/[^A-Za-z0-9_-]/g, ""),
 
   // Request-intake auto-expansion: when an admin approves a loose /request, a
   // one-shot `claude -p` call authors a full concept (name/theme/tagline/copy)
