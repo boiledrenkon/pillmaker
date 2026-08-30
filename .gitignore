@@ -13,8 +13,14 @@ data
 *.db-wal
 discord/worker.log
 
-# ── generated output (final images are delivered via Discord, not source) ────
-outputs/
+# ── generated output ─────────────────────────────────────────────────────────
+# Images stay local (delivered via Discord; ~300MB and regenerable). The final
+# ACCEPTED prompt per concept IS source — it's the reference record of what
+# compose actually produces from a brief — so outputs/<slug>/<slug>.txt is
+# tracked. Rejects under outputs/<slug>/fail/ stay ignored.
+outputs/**
+!outputs/*/
+!outputs/*/*.txt
 
 # ── python / OS cruft ────────────────────────────────────────────────────────
 **/__pycache__
